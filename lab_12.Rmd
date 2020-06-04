@@ -1,0 +1,167 @@
+---
+title: "Lab 12 -- Bias-Variance Tradeoff"
+author: Danni Chen
+output:
+  html_document:
+  theme: simplex
+fig_caption: true
+---
+
+# Getting started
+In this assignment you will revisit the bias-variance tradeoff of different algorithms, applied in the context of the simulation built in class. Recall that in the world we defined, there were 10 predictor variables $x = (x_1, ..., x_{10})$ related to outcome $y$ by the following equation
+
+$$y = x_1 + x_2 + x_3 + \epsilon$$
+
+The goal in this exercise is to find an algorithm $\hat{f}$ (e.g. linear regression, lasso, etc.) that provides low mean squared error in predictions for an individual for whom all characteristics are equal to 1, i.e. $x_0 = (x_1=1, x_2=1, ..., x_{10}=1)$.
+
+# Part 1
+
+Edit the simulation in the following code chunk, as follows.
+
+1. Set `iters` to be equal to 10,000. Hint: use a smaller value when testing the code. For the final run, set `iters` to 10,000.
+2. In each iteration, predict the outcome for $x = x_0$ using the following five prediction algorithms:
+    i. Linear regression.
+    ii. Lasso regression, using the largest penalty (value of lambda) used by the `glmnet` (or `cv.glmnet`) algorithm.
+    iii. Lasso regression, using the smallest penalty (value of lambda) used by the `glmnet` (or `cv.glmnet`) algorithm.
+    iv. Lasso regression, using the value of lambda that minimizes CV MSE (hint: see help for `cv.glmnet`).
+    v. Lasso regression, using the largest value of lambda such that CV MSE is within 1 standard error of the minimum CV MSE (hint: see help for `cv.glmnet`).
+
+```{r, eval = TRUE}
+# Reinstall tidyr if pivot_longer() not found
+install.packages("tidyr")
+
+# Load libraries
+library(tidyverse)
+library(glmnet)
+
+# Sim iterations
+iters <- 10000
+
+# Lists to store predictions for different prediction algorithms
+f_hat_lm <- vector("list", iters)
+f_hat_lasso_big_lambda <- vector("list", iters)
+f_hat_lasso_small_lambda <- vector("list", iters)
+f_hat_lasso_lambda_min <- vector("list", iters)
+f_hat_lasso_lambda_1se <- vector("list", iters)
+
+# True model of the world (f)
+vars <- 10
+model_vars <- 3
+beta = c(rep(1, model_vars), rep(0, vars - model_vars))
+form <- paste("y ~", paste0("x", 1:vars, collapse = ' + ')) %>% 
+  as.formula()
+
+# Value of X for making prediction
+x0 <- tibble(id = 1, names = 1:vars, value = 1) %>% 
+  pivot_wider(id_cols = id, names_from = names, values_from = value, names_prefix = "x") %>% 
+  mutate(y = 0)
+
+# Set seed for replication
+set.seed(123)
+
+# Simulated data
+for (i in 1:iters) {
+  # Simulated characteristics and irreducible error
+  obs <- 50
+  sim_data <- tibble(id = rep(1:obs, vars), 
+                     names = rep(1:vars, each = obs)) %>% 
+    mutate(value = runif(n(), -1, 1)) %>% 
+    pivot_wider(id_cols = id, names_from = names, values_from = value, names_prefix = "x") %>% 
+    mutate(noise = rnorm(n(), 0, sqrt(vars)))
+  
+  # Calculate outcome for each observation
+  sim_data <- sim_data %>% 
+    pivot_longer(starts_with("x"), names_to = "names", values_to = "value") %>% 
+    mutate(beta = rep(beta, obs))
+  
+  sim_data <- sim_data %>% 
+    group_by(id) %>% 
+    mutate(f = sum(value*beta),
+           y = f + noise) %>% 
+    ungroup
+  
+  sim_data <- sim_data %>% 
+    pivot_wider(id_cols = c("id", "y", "f", "noise"), names_from = names, values_from = value) 
+  
+  # Linear model prediction
+  lm <- glm(y~x1+x2+x3+x4+x5+x6+x7+x8+x9+x10, data = sim_data)
+  f_hat_lm[[i]] <- predict(lm, x0)
+  
+  # Lasso model, using largest penalty used by glmnet
+  lasso <- formula(y~0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x10)
+  m1 <- model.matrix(lasso, data = sim_data)
+  m2 <- model.matrix(lasso, data=x0)
+  penalty <- cv.glmnet(x=m1,y=sim_data$y)
+  f_hat_lasso_big_lambda[[i]] <- predict(penalty,m2, s=max(penalty$lambda))
+  
+  # Lasso model, using smallest penalty used by glmnet
+  f_hat_lasso_small_lambda[[i]] <- predict(penalty,m2, s=min(penalty$lambda))
+  
+  # Lasso model, using the value of lambda that gives minimum mean cross-validated error
+  f_hat_lasso_lambda_min[[i]] <- predict(penalty,m2, s="lambda.min")
+  
+  # Lasso model, using the largest value of lambda such that error is within 1 standard error of the minimum
+  f_hat_lasso_lambda_1se[[i]] <- predict(penalty,m2, s="lambda.1se")
+  
+}
+```
+
+# Part 2
+
+Using the predictions made in the simulation in Part 1, calculate the following terms for each of the 5 algorithms.
+
+1. Bias
+2. Variance
+3. Bias^2 + Variance
+
+Display the results in a readable format, such as a table. Then answer the following questions.
+
+A. Which algorithms produce the smallest and largest bias, respectively? 
+B. Which algorithms produce the smallest and largest variance, respectively? 
+C. Which algorithms produce the smallest and largest mean squared error, respectively?
+
+```{r, eval = TRUE}
+x1 <- 1
+x2 <- 1
+x3 <- 1
+true_y <- sum(x1,x2,x3)
+
+bias1 <- true_y - mean(unlist(f_hat_lm))
+bias2 <- true_y - mean(unlist(f_hat_lasso_big_lambda))
+bias3 <- true_y - mean(unlist(f_hat_lasso_small_lambda))
+bias4 <- true_y - mean(unlist(f_hat_lasso_lambda_min))
+bias5 <- true_y - mean(unlist(f_hat_lasso_lambda_1se))
+
+bias1_2 <- bias1^2
+bias2_2 <- bias2^2
+bias3_2 <- bias3^2
+bias4_2 <- bias4^2
+bias5_2 <- bias5^2
+
+variance1 <- var(unlist(f_hat_lm))
+variance2 <- var(unlist(f_hat_lasso_big_lambda))
+variance3 <- var(unlist(f_hat_lasso_small_lambda))
+variance4 <- var(unlist(f_hat_lasso_lambda_min))
+variance5 <- var(unlist(f_hat_lasso_lambda_1se))
+
+mse1 <- bias1_2 + variance1
+mse2 <- bias2_2 + variance2
+mse3 <- bias3_2 + variance3
+mse4 <- bias4_2 + variance4
+mse5 <- bias5_2 + variance5
+
+names <- c("lm","lasso_big_lambda", "lasso_small_lambda" ,"lasso_lambda_min", "lasso_lambda_1se")
+bias <- c(bias1, bias2, bias3, bias4, bias5)
+bias_2 <- c(bias1_2, bias2_2, bias3_2, bias4_2, bias5_2)
+variance <- c(variance1, variance2, variance3, variance4, variance5)
+mse <- c(mse1, mse2, mse3, mse4, mse5)
+
+tibble(names, bias, bias_2, variance, mse)
+
+# Answer: As we can see in the table： 
+# BIAS comparison：lasso_big_lambda (lasso regression using the largest panalty) produces the largest bias, while the linear regression produces the smallest bias.
+# Variance comparison：the linear regression produces the largest variance, while lasso_big_lambda (lasso regression using the largest panalty) produces the smallest variance.
+# MSE comparison: lasso_big_lambda (lasso regression using the largest panalty) produces the largest MSE, while lasso_lambda_min (using the value of lambda that minimizes CV MSE) produces the smallest MSE.
+
+```
+

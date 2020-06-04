@@ -1,0 +1,260 @@
+---
+title: "Lab 03 - Data Wrangling"
+author: NAME HERE
+date: Assignment due by 11:59PM on Friday, September 13, 2019
+output:
+  html_document:
+  toc: false
+  theme: simplex
+---
+
+# Getting started  
+In this exercise you will use R Studio to import and calculate summary statics of the Single Family Loan-Level Data Set, from Freddie Mac.
+
+The Freddie Mac data includes loan-level credit performance data on fixed-rate mortgages. It includes loan-level origination and loan performance and actual loss data on Single Family mortgages acquired by Freddie Mac. The data and more details can be obtained [here](http://www.freddiemac.com/research/datasets/sf_loanlevel_dataset.html). In the User Guide, the section `File Layout & Data Dictionary` contains the description of each variable in the data sets. 
+
+You will work with a sample of the "full" data set from 2005, 2006 and 2007. For each year, there are two files: origination and monthly performance. The data from a year contains mortgages originated in that year. The performace file contains information from the month of origination until the termination event or 09/2016, the last month in the data set.
+
+Before you start, load the package `tidyverse` to your working space.
+
+```{r message = FALSE}
+library(tidyverse)
+```
+
+# Problem 1: Import the data
+Load loan data from the folder `data_Freddie_Mac` using the `read_delim` function from the `tidyverse` package. There are two types of files--origination files and performance files-- for each year from 2005 to 2007 (six files in total).
+
+Modify the following code chunk to load the three origination files. To help you get started, the code for the origination file for 2005 has been completed. Look at the options in `?read_delim` for an explanation of this function. Why are we trimming leading blankspaces? What are potential problems if you do not speficy the column types? 
+
+```{r}
+# Load loan origination data for 2005, 2006, and 2007
+orig_2005 <-
+  read_delim(
+    "data_Freddie_Mac/2005/sample_orig_2005.txt.bz2",
+    delim = "|",
+    trim_ws = TRUE,
+    col_names = c(
+      "fico",
+      "dt_first_pi",
+      "flag_fthb",
+      "dt_matr",
+      "cd_msa",
+      "mi_pct",
+      "cnt_units",
+      "occpy_sts",
+      "cltv",
+      "dti",
+      "orig_upb",
+      "ltv",
+      "int_rt",
+      "channel",
+      "ppmt_pnlty",
+      "prod_type",
+      "st",
+      "prop_type",
+      "zipcode",
+      "id_loan",
+      "loan_purpose",
+      "orig_loan_term",
+      "cnt_borr",
+      "seller_name",
+      "servicer_name",
+      "flag_sc"
+    ),
+    col_types = cols(
+      "i",
+      "i",
+      "c",
+      "i",
+      "c",
+      "d",
+      "i",
+      "c",
+      "d",
+      "i",
+      "i",
+      "i",
+      "d",
+      "c",
+      "c",
+      "c",
+      "c",
+      "c",
+      "c",
+      "c",
+      "c",
+      "i",
+      "i",
+      "c",
+      "c",
+      "c"
+    )
+  )
+orig_2006 <- read_delim("data_Freddie_Mac/2006/sample_orig_2006.txt.bz2", ...)
+orig_2007 <- read_delim("data_Freddie_Mac/2007/sample_orig_2007.txt.bz2", ...)
+```
+
+Modify the code chunk below to load the three performance data files. Follow the User Guide to determine the variable types. Note that only the first 22 variables listed in the User Guide are included in the data file. 
+
+```{r eval = FALSE}
+# Load loan performance data for 2005, 2006, and 2007
+svcg_2005  <-
+  read_delim(
+    "data_Freddie_Mac/2005/sample_svcg_2005.txt.bz2",
+    delim = "|",
+    trim_ws = TRUE,
+    col_names = c(
+      "id_loan", 
+      "svcg_cycle", 
+      "current_upb", 
+      "delq_sts", 
+      "loan_age", 
+      "mths_remng", 
+      "repch_flag", 
+      "flag_mod",
+      "cd_zero_bal", 
+      "dt_zero_bal", 
+      "current_int_rt", 
+      "non_int_brng_upb", 
+      "dt_lst_pi", 
+      "mi_recoveries",
+      "net_sale_proceeds", 
+      "non_mi_recoveries", 
+      "expenses", 
+      "legal_costs", 
+      "maint_pres_costs", 
+      "taxes_ins_costs",
+      "misc_costs", 
+      "actual_loss"
+    ),
+    col_types = cols( 
+    )
+  )
+
+svcg_2006 <- read_delim("data_Freddie_Mac/2006/sample_svcg_2006.txt.bz2", ...)
+svcg_2007 <- read_delim("data_Freddie_Mac/2007/sample_svcg_2007.txt.bz2", ...)
+```
+
+
+# Problem 2: Append the data frames 
+Using the `bind_rows` command from the `dplyr` package, combine the 2005-2007 origination data into a single data frame, called `orig`. Limit this data frame to only include the following variables: `id_loan, orig_upb, fico, cltv, ltv, dti, int_rt, st`. 
+
+Similarly, combine the 2005-2007 performance data into a single data frame, called `svcg`. Limit this data frame to only include the following variables: `id_loan, svcg_cycle, cd_zero_bal, delq_sts, flag_mod, actual_loss`.
+
+Finally, erase from the R working environment the six year-specific data frames used to create the `orig` and `svcg` data frames.
+
+```{r}
+# Combined origination and performance data
+orig <- ...
+svcg <- ...
+
+# Delete component files
+```
+
+# Problem 3: Data frame operations
+For each of the following questions, provide a written explanation along with the R code requested. 
+
+1. Is `orig` a tibble or a classic `data.frame` object?
+```{r}
+# R code to confirm your answer
+is_tibble(orig)
+```
+
+2. Display the names of the variables in `orig` and `svcg`. (No written answer required.)
+```{r}
+# R code to display the variables requested
+names(orig)
+names(svcg)
+```
+
+3. Using **base R operations only**, create a tibble called `orig_id_loan` that consists only of the `"id_loan"` variable in `orig`. Does the `"id_loan"` variable uniquely identify an observation in `orig_id_loan`? Discuss whether that should or should not be the case, based on the nature of this data set.
+```{r}
+# Create the requested tibbles, using base R
+orig_id_loan <- 
+
+# R code to confirm that orig_id_loan is a tibble
+
+
+# R code to check whether id_loan uniquely identifies observations
+
+```
+
+4. Using **dplyr operations only**, create a tibble that consists only of the `"id_loan"` variable in `svcg`. Does the `"id_loan"` variable uniquely identify an observation in this data set? Discuss whether that should or should not be the case, based on the nature of this data set.
+```{r}
+# Create the requested tibbles, using dplyr
+svcg_id_loan <- 
+
+# R code to confirm that svcg_id_loan is a tibble
+
+
+# R code to check whether id_loan uniquely identifies observations
+
+```
+
+5. What is the data type (character, numeric, logical) of the `"id_loan"` variable in the `orig` data frame?
+```{r}
+# R code to reveal the data type of id_loan in orig
+
+```
+
+6. How many loans in the data were given to individuals with a fico score of at least 700 in the state of Illinois? Answer using base R code, as well as dplyr operations only. **Check that both methods provide the same answer.** Are base R or dplyr operations preferable for answering this question? Discuss.
+```{r}
+# base R answer
+
+
+# dplyr answer
+
+
+```
+# Problem 4: Joins
+
+1. Do all loan ids in `orig` have a match in `svcg`? Use `anti_join()` to answer the question.
+```{r}
+
+```
+
+2. Do all loan ids in `svcg` have a match in `orig`? Use `anti_join()` to answer the question.
+```{r}
+
+```
+
+3. Create a data frame that joins the `orig` and `svcg` data frames, but only retains observations for loan IDs that are found in both data sets. How many observations are in the resulting data frame?
+```{r}
+orig_svcg <- 
+
+```
+
+
+# Problem 5: Summarize the data
+The `orig_svcg` data frame is useful for relating loan performance to origination characteristics. But care is needed when summarizing the data.
+
+1. Calculate the mean value of `fico` in both the `orig` and `orig_svcg` files. Provide two reasons that the means differ between the two files.
+```{r}
+# Use mean() to calculate the mean value of fico in orig
+
+
+# Use mean() to calculate the mean value of fico in orig_svcg
+
+
+```
+
+2. Add a new variable to `orig_svcg` that flags the first month in which a loan is observed. Name this new variable `first_record`. The variable should take a value of `TRUE` for the first month in which a loan is observed and a value of `FALSE` for all subsequent observations of the loan.
+
+    **Hint:** You may want to use the `dplyr` functions `arrange` and `mutate`, and the base R function `duplicated`.
+```{r}
+# Hint: Arrange observations in order of svcg_cyle. Then first_record = true if id_loan is not a duplicate of previous rows.
+orig_svcg <- 
+```
+
+3. Use the new variable `first_record` to count the number of unique loans in the `orig_svcg` data frame.
+```{r}
+
+```
+
+# Problem 6: Save the data frame
+Using the R built-in command `save()`, save the data frame `orig_svcg` to a file named `cleaned_Freddie_Mac.Rdata` in the `lab-03` folder.
+
+```{r}
+
+```
+

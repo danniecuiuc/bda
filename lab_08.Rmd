@@ -1,0 +1,190 @@
+---
+title: "Lab 08 -- Classification"
+author: Danni Chen
+date: Assignment due by 11:59PM on Sunday, 9/29/2019
+output:
+  html_document:
+  theme: simplex
+fig_caption: true
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Getting started
+In this assignment, you will apply regression tools to the Freddie Mac Data, building on the tools discussed in class.
+
+Start by loading the packages `tidyverse` and `MASS`. Also load the Freddie Mac data you downloaded from S3, per the assignment instructions. These data, which we also used in class, contain information on home mortages 48 months after the scheduled first month of payment. 
+
+Edit the code chunk below to complete the tasks described in the comments
+
+```{r}
+library(tidyverse)
+library(MASS)
+
+# Load data into R workspace
+load("data/Freddie_Mac_month_48.Rdata")
+
+# Keep only the following variables: d180, fico, int_rt, dti, dt_first_pi_date
+orig_svcg_48 <- dplyr::select(orig_svcg_48, d180, fico, int_rt, dti, dt_first_pi_date)
+
+# Remove observations with missing values of fico, int_rt, or dti
+orig_svcg_48 <- dplyr::filter(orig_svcg_48, !is.na(fico), !is.na(int_rt), !is.na(dti))
+```
+
+# Problem 1: Split the data to test the models
+In this problem set you will develop several models and compare their accuracy. To do this, you will first estimate (or "train") the model using part of the data. You will then test how well the model performs on the other part of the data.
+
+Split the `Freddie_Mac_month_48` dataframe into two data frames. The first data frame, which you should name `train_data`, should cover all loans beginning in 2006 or earlier. the second dataframe, called `test_data`, should cover loans beginning in 2007 or later. Use the variable `dt_first_pi_date` to tell when the first payment of the loan was scheduled.
+
+```{r}
+# train_data
+train_data <- orig_svcg_48 %>%  
+  filter(as.character(dt_first_pi_date) <= "2006-12-01")
+
+# test_data
+test_data <- orig_svcg_48 %>%  
+  filter(as.character(dt_first_pi_date) >= "2007-01-01")
+
+# Write code to confirm that the number of rows in train_data and test_data sum to the original number of rows
+all.equal(nrow(train_data)+nrow(test_data), nrow(orig_svcg_48))
+```
+
+
+# Problem 2: Linear Regression
+
+1. Using the `glm()` command and the `train_data` data, estimate a linear probability model of `d180` (defaulting by 180 days or more) using three predictors: the borrower's credit score, the loan original interest rate, and the debt-to-income ratio. Display and interpret the coefficients of the model.
+```{r}
+# Store the model results in a variable called `model_lm`
+model_lm <- glm(d180 ~ fico + int_rt + dti, data = train_data)
+
+# Display a summary of the model coefficients
+summary(model_lm)
+```
+
+2. Add a new variable to `train_data` that contains the predicted value of `d180` based on the model you just estimated. Name this variable `d180_lm`. Also add a binary variable `d180_lm_binary` which equals 1 if `d180_lm > 0.5` and equals 0 otherwise. What is the error rate of your model in the `train_data` dataset? Also calculate and interpret the confusion matrix.
+```{r}
+# add d180_lm and d180_lm_binary to train_data
+thresh <- 0.5
+train_data <- train_data %>%
+  mutate(d180_lm = model_lm$fitted.values) %>%
+  mutate(d180_lm_binary = as.numeric(d180_lm > thresh))
+
+# calculate model error rate
+error_rate_train <- train_data %>%
+  mutate(error = d180 != d180_lm_binary) %>%
+  summarise(error_rate_train = sum(error)/n())
+error_rate_train
+# Answer: The error rate in "train data" is 19.22%.
+
+# calculate model confusion matrix
+table(train_data$d180, train_data$d180_lm_binary)
+
+```
+
+3. Add a new variable to `test_data` that contains the predicted value of `d180` based on the model you just estimated. **Hint: use the `predict()` command.** Name this variable `d180_lm`. Also add a binary variable `d180_lm_binary` which equals 1 if `d180_lm > 0.5` and equals 0 otherwise.  What is the error rate of your model in the `test_data` dataset? Also calculate and interpret the confusion matrix. Is the model error in `test_data` larger or smaller than the model error rate in `train_data`? Describe why.
+```{r}
+# add d180_lm and d180_lm_binary to test_data
+test_data <- test_data %>%
+  mutate(d180_lm = predict(model_lm, .), 
+         d180_lm_binary = as.numeric(d180_lm > 0.5))
+
+# calculate model error rate
+error_rate_test <- test_data %>% 
+  mutate(error = d180 != d180_lm_binary) %>%
+  summarise(error_rate_test = sum(error)/n())
+error_rate_test
+# Answer: The error rate in "test data" is 25.96%.
+
+# calculate model confusion matrix
+table(test_data$d180, test_data$d180_lm_binary)
+
+# Answer: The model error in `test_data` is larger than the model error rate in `train_data`. Because the model we used to estimate the test data does not derive from the itself, but derives from the model estimated by other data(train data). So it is not the best model to estimate itself, it might cause larger error.
+```
+
+4. Using the `test_data` data, make a scatter plot (black dots) of actual default vs. fico scores. Add to this graph a scatter plot (red dots) of predicted default vs. fico scores. Is it appropriate to interpret all these predictions as probabilities of default? Why or why not?
+```{r}
+# Scatter plot
+model_lm_test <- glm(d180 ~ fico + int_rt + dti, data = test_data)
+test_data %>%
+  mutate(lm_fitted_test = model_lm_test$fitted.values) %>%
+  ggplot() +
+  geom_point(aes(x=fico, y=d180), color = "black") +
+  geom_point(aes(x=fico, y=lm_fitted_test), color = "red") 
+
+# Answer: No, not all the predictions is appropriate probabilities. Because or some large values of FICO near 800, the predicted probability is lower than 0. Since we know that probabilities lies between [0, 1] and it is not possible to lie outside this range, so these predictions are clearly wrong.
+```
+
+# Problem 3: Logistic Regression
+This problem repeats the exercises in problem 2, but using a logit (binomial) model rather than the linear probability model.
+
+1. Using the `glm()` command and the `train_data` data, estimate a logistic model of `d180` (defaulting by 180 days or more) using three predictors: the borrower's credit score, the loan original interest rate, and the debt-to-income ratio. Display and interpret the coefficients of the model.
+```{r}
+# Store the model results in a variable called `model_logit`
+model_logit <- glm(d180 ~ fico + int_rt + dti, data = train_data, family=binomial(link='logit'))
+
+# Display a summary of the model coefficients
+summary(model_logit)
+```
+
+2. Add a new variable to `train_data` that contains the predicted value of `d180` based on the logistic model you just estimated. Name this variable `d180_logit`. Also add a binary variable `d180_logit_binary` which equals 1 if `d180_logit > 0.5` and equals 0 otherwise. What is the error rate of your model in the `train_data` dataset? Also calculate and interpret the confusion matrix.
+```{r}
+# add d180_logit and d180_logit_binary to train_data
+train_data <- train_data %>%
+  mutate(d180_logit = model_logit$fitted.values) %>%
+  mutate(d180_logit_binary = as.numeric(d180_logit > 0.5))
+
+# calculate model error rate
+error_rate_logit_train <- train_data %>% 
+  mutate(error = d180 != d180_logit_binary) %>%
+  summarise(error_logit_train = sum(error)/n())
+error_rate_logit_train
+# Answer: The error rate in train data in this logit model is 19.25%.
+
+# calculate model confusion matrix
+table(train_data$d180, train_data$d180_logit_binary)
+```
+
+
+3. Add a new variable to `test_data` that contains the predicted value of `d180` based on the logistic model you just estimated. **Hint: use the `predict()` command.** Name this variable `d180_logit`. Also add a binary variable `d180_logit_binary` which equals 1 if `d180_logit > 0.5` and equals 0 otherwise. What is the error rate of your model in the `test_data` dataset? Also calculate and interpret the confusion matrix. Is the model error in `test_data` larger or smaller than the model error rate in `train_data`? Describe why.
+```{r}
+# add d180_logit and d180_logit_binary to test_data
+test_data <- test_data <- test_data %>%
+  mutate(d180_logit = predict(model_logit, ., type = "response"), 
+         d180_logit_binary = as.numeric(d180_logit > 0.5))
+
+# calculate model error rate
+error_rate_logit_test <- test_data %>% 
+  mutate(error = d180 != d180_logit_binary) %>%
+  summarise(error_logit_test = sum(error)/n())
+error_rate_logit_test
+# Answer: The error rate in train data in this logit model is 25.41%.
+
+# calculate model confusion matrix
+table(test_data$d180, test_data$d180_logit_binary)
+
+# Answer: The model error in `test_data` is larger than the model error rate in `train_data`. Because the model we used to estimate the test data does not derive from the itself, but derives from the model estimated by other data(train data). So it is not the best model to estimate itself, it might cause larger error.
+
+```
+
+4. Using the `test_data` data, make a scatter plot (black dots) of actual default vs. fico scores. Add to this graph a scatter plot (red dots) of predicted default vs. fico scores based on the logistic model. Is it appropriate to interpret all these predictions as probabilities of default? Why or why not?
+```{r}
+# Scatter plot
+model_logit_test <- glm(d180 ~ fico + int_rt + dti, data = test_data, family=binomial(link='logit'))
+
+test_data %>%
+  mutate(logit_fitted_test = model_logit_test$fitted.values) %>%
+  ggplot()+
+  geom_point(aes(x=fico, y=d180), color = "black")+
+  geom_point(aes(x=fico, y=logit_fitted_test), color = "red")
+
+# Answer: Yes, because for all the values of FICO, the predicted probabilities lie in the range of [0, 1]. So this logit model is appropiate to interpret all these predictions as probabilities of default.
+  
+```
+
+# Problem 4: Compare the Accuracy of the Models
+Based on your analysis above, which model generates better predictive performance? Justify your answer.
+
+```{r}
+# Answer: The logit model is better. Compared the models and the scatter plots above, we can see that the probabilities in the logit model lies in [0, 1], but in the linear model it is not. So logit model is more appropriate to interpret all these predictions as probabilities of default.
+```

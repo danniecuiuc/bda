@@ -1,0 +1,31 @@
+---
+title: "Lab-01: Introduction to AWS and RStudio"
+author: Danni Chen
+date: Assignment due by 11:59PM on Tuesday, 9/3/2019
+output: html_document
+---
+
+# EC2 Instance
+
+a. Screenshot of your security group "Inbound" rule.
+![](screenshot.jpg)
+
+b. Screenshot of your EC2 instance "Description" tab.
+![](instance.jpg)
+
+c. Screenshot of your RStudio server.
+![](rstudio.jpg)
+
+# List of all files in your `lab-01` folder
+
+Create an itemized list of all final files in your `lab-01` folder. 
+
+instance.jpg
+
+rstudio.jpg
+
+screenshot.jpg
+
+lab_01.rmd
+
+lab_01.html

@@ -1,0 +1,223 @@
+---
+title: "Lab 11 -- Lasso"
+author: Danni Chen
+date: Assignment due by 11:59PM on Friday, 10/11/2019
+output:
+  html_document:
+  theme: simplex
+fig_caption: true
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Getting started
+In this assignment you will apply Lasso techniques to predict the current unpaid balance in mortgages using the Single Family Loan-Level Data Set, from Freddie Mac. A description of the data can be found [here](http://www.freddiemac.com/research/datasets/sf_loanlevel_dataset.html). In the User Guide, the section `File Layout & Data Dictionary` contains the description of each variable in the data sets. 
+
+Start by loading the packages `tidyverse`, `boot`, and `glmnet`. Also load the Freddie Mac data you downloaded from S3, per the assignment instructions. These data contain origination and loan performance information 48 months after the scheduled first month of payment for home mortages originated in 2005.
+
+Edit the code chunk below to complete the tasks described in the comments
+
+```{r}
+# load required packages
+library(tidyverse)
+library(glmnet)
+library(boot)
+
+# Load data into R workspace
+load("data/orig_svcg_2005_48mo.Rdata")
+names(orig_svcg_2005)
+
+```
+
+# Problem 1: Data cleaning
+In this exercise you will build a model to predict the fraction of a loan balance that remains upaid after 48 months. Add the following three variables to the `orig_svcg_2005` data frame:
+
+* `frac_unpaid`: that equals the fraction of the original upaid principal balance (`orig_upb`) that remains unpaid after 48 months (`current_upb`).
+
+* `msa`: equal to 1 if the mortgaged property is located in a MSA, and 0 otherwise. Drop the variable `cd_msa` from the data frame once you have created the `msa` variable.
+
+* `other_servicers`: equals 1 if the servicer name is in the category 'other servicers', and 0 otherwise. Drop the variable `servicer_name` from the data frame once you have created the `other_servicers` variable.
+
+```{r}
+# Add variable: frac_unpaid
+orig_svcg_2005 <- orig_svcg_2005 %>%
+  dplyr::mutate(frac_unpaid = current_upb/orig_upb)
+
+# Add variable: msa
+orig_svcg_2005 <- orig_svcg_2005 %>%
+  dplyr::mutate(msa = as.numeric(!is.na(cd_msa))) %>%
+  dplyr::select (-cd_msa)
+
+# Add variable: other_servicers
+orig_svcg_2005 <- orig_svcg_2005 %>%
+  dplyr::mutate(other_servicers = as.numeric(servicer_name=="Other servicers"))%>%
+  dplyr::select (-servicer_name)
+
+orig_svcg_2005 <- orig_svcg_2005 %>%
+  filter(!is.na(fico)) %>%
+  filter(!is.na(orig_upb)) %>% 
+  filter(!is.na(mi_pct)) %>% 
+  filter(!is.na(dti)) %>% 
+  filter(!is.na(ltv)) %>% 
+  filter(!is.na(int_rt)) %>% 
+  filter(!is.na(frac_unpaid)) %>% 
+  filter(!is.na(flag_fthb))
+
+```
+
+
+# Problem 2: Model estimation
+
+Estimate models using three sets of potential controls. All three sets of controls should contain linear terms in `msa`, `other_servicers`, and `flag_fthb`. The remaining potential predictors in the sets should be as follows:
+
+* Potential predictor set 1: add linear terms for `fico`, `orig_upb`, `mi_pct`, `dti`, `ltv`, and `int_rt`.
+* Potential predictor set 2: add 5th order polynomials for `fico`, `orig_upb`, `mi_pct`, `dti`, `ltv`, and `int_rt`.
+* Potential predictor set 3: add 10th order polynomials for `fico`, `orig_upb`, `mi_pct`, `dti`, `ltv`, and `int_rt`.
+
+```{r}
+# Potential predictors
+# 
+# Add polynomials in each of the following variables
+#   original fico score
+#   original UPB
+#   original primary mortgage insurance
+#   original debt-to-income
+#   original loan-to-value
+#   original interest rate
+#   
+# Add the following variables in linearly
+#   msa
+#   other_servicers
+#   flag_fthb
+
+# Define the formulas for each set of potential predictors using the formula() function
+f1 <- formula(frac_unpaid ~ msa + other_servicers + flag_fthb + fico + orig_upb + mi_pct + dti + ltv + int_rt)
+f2 <- formula(frac_unpaid ~ 
+                msa + 
+                other_servicers + 
+                flag_fthb + 
+                poly(fico, 5, raw = TRUE) + 
+                poly(orig_upb, 5, raw = TRUE) + 
+                poly(mi_pct, 5, raw = TRUE) + 
+                poly(dti, 5, raw = TRUE) + 
+                poly(ltv, 5, raw = TRUE) +
+                poly(int_rt, 5, raw = TRUE))
+f3 <- formula(frac_unpaid ~ 
+                msa + 
+                other_servicers + 
+                flag_fthb + 
+                poly(fico, 10, raw = TRUE) + 
+                poly(orig_upb, 10, raw = TRUE) + 
+                poly(mi_pct, 10, raw = TRUE) + 
+                poly(dti, 10, raw = TRUE) + 
+                poly(ltv, 10, raw = TRUE) +
+                poly(int_rt, 10, raw = TRUE))
+              
+```
+
+Use OLS regression to estimate a model using each set of potential predictors.
+```{r}
+#  OLS regressions for all three models
+lm_1 <- glm(f1, data = orig_svcg_2005)
+lm_2 <- glm(f2, data = orig_svcg_2005)
+lm_3 <- glm(f3, data = orig_svcg_2005)
+
+# Calculate and report the 5-fold CV MSE for each OLS model
+set.seed(1)
+mse1 <- cv.glm(orig_svcg_2005, lm_1, K=5)$delta[1]
+mse2 <- cv.glm(orig_svcg_2005, lm_2, K=5)$delta[1]
+mse3 <- cv.glm(orig_svcg_2005, lm_3, K=5)$delta[1]
+list(mse1 = mse1, mse2 = mse2, mse3 = mse3)
+
+# Does including more predictors improve out-of-sample prediction performance?
+# Answer: No, including more predictors does not necessary improve the prediction performance based on the regression results above. As we can see, model lm_2 (with a 5 polinomial) has the smallest mse among the three models, and thus have the best prediction performance compared to linear model and the 10 polinomial model. Lm_3 with a 10 polinomial is worse with a larger mse.
+
+```
+
+Now use LASSO regression to select a model from each set of potential predictors.
+```{r}
+# Build the outcome and predictor vector and matrices, respectively, for each set of potential predictors
+f1_0 <- formula(frac_unpaid ~ 0 + msa + other_servicers + flag_fthb + fico + orig_upb + mi_pct + dti + ltv + int_rt)
+f2_0 <- formula(frac_unpaid ~ 
+                0 +
+                msa + 
+                other_servicers + 
+                flag_fthb + 
+                poly(fico, 5, raw = TRUE) + 
+                poly(orig_upb, 5, raw = TRUE) + 
+                poly(mi_pct, 5, raw = TRUE) + 
+                poly(dti, 5, raw = TRUE) + 
+                poly(ltv, 5, raw = TRUE) +
+                poly(int_rt, 5, raw = TRUE))
+f3_0 <- formula(frac_unpaid ~ 
+                0+
+                msa + 
+                other_servicers + 
+                flag_fthb + 
+                poly(fico, 10, raw = TRUE) + 
+                poly(orig_upb, 10, raw = TRUE) + 
+                poly(mi_pct, 10, raw = TRUE) + 
+                poly(dti, 10, raw = TRUE) + 
+                poly(ltv, 10, raw = TRUE) +
+                poly(int_rt, 10, raw = TRUE))
+
+x1 <- model.matrix(f1_0, data = orig_svcg_2005)
+x2 <- model.matrix(f2_0, data = orig_svcg_2005)
+x3 <- model.matrix(f3_0, data = orig_svcg_2005)
+y <- orig_svcg_2005$frac_unpaid
+
+# Use cv.glmnet to estimate lasso regressions for each set of potential predictors
+cvfit1 <- cv.glmnet(x=x1, y=y)
+cvfit2 <- cv.glmnet(x=x2, y=y)
+cvfit3 <- cv.glmnet(x=x3, y=y)
+
+# For each set of potential predictors, consider the model that corresponds to the 
+#  value of lambda that gives minimum CV MSE. Then answer the following two questions.
+set.seed(1)
+y_hat_1 <- predict(cvfit1, newx = x1, s = "lambda.min")
+y_hat_2 <- predict(cvfit2, newx = x2, s = "lambda.min")
+y_hat_3 <- predict(cvfit3, newx = x3, s = "lambda.min")
+msefit1 <- mean((y-y_hat_1)^2)
+msefit2 <- mean((y-y_hat_2)^2)
+msefit3 <- mean((y-y_hat_3)^2)
+
+# 1. For each set of potential predictors, what fraction of potential predictors are selected?
+
+coef1 <- coef(cvfit1, s = "lambda.min")
+coef2 <- coef(cvfit2, s = "lambda.min")
+coef3 <- coef(cvfit3, s = "lambda.min")
+
+coef1
+coef2
+coef3
+
+fraction1 <- sum(as.vector(coef1)!=0)/length(coef1)
+fraction2 <- sum(as.vector(coef2)!=0)/length(coef2)
+fraction3 <- sum(as.vector(coef3)!=0)/length(coef3)
+
+fraction1
+fraction2
+fraction3
+# Answer: For potential predictor set 1, set 2 and set3, we have 81.82%, 97.14% and 69.23% of potential predictors which are selected, respectively.
+
+# 2. For each set of potential predictors, what is the CV MSE of the selected model?
+list(msefit1 = msefit1, msefit2 = msefit2, msefit3 = msefit3)
+# Answer: For potential predictor set 1, set 2 and set3, the CV MSE of the selected models are 0.01749735, 0.01726083, 0.01724878, respectively. As we can see, the CV MSE of the 10 polynomial model in the Lasso regresson is the smallest.
+```
+
+# Problem 3: Discussion
+
+Discuss the following points based on results above and issues discussed in class.
+
+1. Is there any cost (in terms of predictive performance) to adding more potential predictors into the LASSO model? 
+
+Answer: Yes, because LASSO regression produces biased estimates, which could be regarded as the cost of using LASSO model. This means, when we try to add more potential predictors, although LASSO regression could overcome the overfitting problems by penalizing the high β values and converging the irrelevant variable coefficients to 0, we are actually using LASSO model to generate biased estimates.
+
+
+2. Are any costs (in terms of predictive performance) to adding more potential predictors into a model the same for both OLS and LASSO? 
+
+Answer: Based on the results above, when adding more potential predictor into a model, OLS model might generate larger MSE and generate overfitting problems (although OLS is unbiased estimation). However, LASSO solve the overfitting problem by penalizing the high β values and converging the irrelevant variable coefficients to 0. But if we care using LASSO, we are actually using it to produce biased estimates.
+
+
+

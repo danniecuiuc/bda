@@ -1,0 +1,255 @@
+---
+title: "Lab 10 -- Variable Selection"
+author: Danni Chen
+output:
+  html_document:
+  theme: simplex
+fig_caption: true
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Lab instructions
+In this lab, you will implement "Forward Stepwise Selection" and "Backward Stepwise Selection," algorithms 6.2 and 6.3, respectively, from the ISLR textbook. Use the same setting covered in class, where the goal is to select which of four potential predictors should be included in a model of driver deaths. In class, we covered how to implement "Best Subset Selection," and that code has been included in the first section below. **Your task for this assignment is therefore to complete the remaining two sections below.**
+
+# Method 1: Best Subset Selection
+Estimate a model for every combination of the $p$ predictors. Select the "best" model, i.e. the one that minimizes CV MSE.
+
+For example, if $p=4$ we would have one model with $k=0$ predictors (constant only model); four simple linear regressions, each with $k=1$ predictor; six regressions with all possible combinations of $k=2$ predictors; four regressions with $k=3$ predictors; and one model with all $k=4$ predictors.  We then compare all the models in two steps:
+
+Let's test this out using the Seatbelts data set, which includes information on the number of deadly accidents in a month before and after a law requiring seatbelts. Info on this data set can be found at https://stat.ethz.ch/R-manual/R-devel/library/datasets/html/UKDriverDeaths.html.
+
+Load the data and keep/create only columns needed for the analysis.
+```{r, results="hide"}
+library(tidyverse)
+library(boot)
+
+# Load the data into a data frame
+seatbelts <- as_tibble(datasets::Seatbelts)
+
+# We will consider 4 possible predictors of DriversKilled: 
+#   X1 = law
+#   X2 = PetrolPrice
+#   X3 = kms
+#   X4 = kms^2
+seatbelts <- seatbelts %>% 
+  dplyr::select(DriversKilled, law, PetrolPrice, kms) %>% 
+  mutate(kms2 = kms^2)
+```
+
+Define the formulas for all 16 models that can be created with subsets of the 4 potential predictors.
+```{r}
+# M0: constant only model (i.e. no predictors)
+f0_1 <- formula(DriversKilled ~ 1)
+
+# M1: models with 1 predictor
+f1_1 <- formula(DriversKilled ~ law)
+f1_2 <- formula(DriversKilled ~ PetrolPrice)
+f1_3 <- formula(DriversKilled ~ kms)
+f1_4 <- formula(DriversKilled ~ kms2)
+
+# M2: models with 2 predictors
+f2_1 <- formula(DriversKilled ~ law + PetrolPrice)
+f2_2 <- formula(DriversKilled ~ law + kms)
+f2_3 <- formula(DriversKilled ~ law + kms2)
+f2_4 <- formula(DriversKilled ~ PetrolPrice + kms)
+f2_5 <- formula(DriversKilled ~ PetrolPrice + kms2)
+f2_6 <- formula(DriversKilled ~ kms + kms2)
+
+# M3: models with 3 predictors
+f3_1 <- formula(DriversKilled ~ PetrolPrice + kms + kms2)
+f3_2 <- formula(DriversKilled ~ law + kms + kms2)
+f3_3 <- formula(DriversKilled ~ law + PetrolPrice + kms2)
+f3_4 <- formula(DriversKilled ~ law + PetrolPrice + kms)
+
+# M4: models with 4 predictors
+f4_1 <- formula(DriversKilled ~ law + PetrolPrice + kms + kms2)
+```
+
+Define a function that takes as input a model formula and returns the leave-one-out cross-validated mean squared error (LOOCV MSE).
+```{r}
+# Function to calculate CV MSE for any formula
+cv_fun <- function(f) {
+  # f <- f0_1
+  glmfit <- glm(f, data = seatbelts)
+  cv.glm(data = seatbelts, glmfit)$delta[1]
+}
+cv_fun(f0_1)
+cv_fun(f3_4)
+```
+
+Use a loop to calculate the LOOCV MSE for all 16 formulas
+```{r}
+# Create a list of formulas
+formulas <- list(f0_1, 
+                 f1_1, f1_2, f1_3, f1_4,
+                 f2_1, f2_2, f2_3, f2_4, f2_5, f2_6,
+                 f3_1, f3_2, f3_3, f3_4,
+                 f4_1)
+
+# Create a list for storing the LOOCV MSE for formulas
+formulas_cv <- vector("list", length(formulas))
+
+# Use a loop to calculate the LOOCV MSE for each formula
+for (i in 1:length(formulas)) {
+  formulas_cv[[i]] <- cv_fun(formulas[[i]])
+}
+
+# Identify the model with the smallest LOOCV MSE
+best_model <- which.min(formulas_cv)
+formulas[[best_model]]
+```
+
+Instead of a loop, use `lapply()` to apply `cv_fun` to each formula in the list `formulas`.
+```{r}
+# Use lapply to calculate the LOOCV MSE for each formula
+formulas_cv2 <- lapply(formulas, cv_fun)
+all.equal(formulas_cv, formulas_cv2)
+
+# lapply() returns a list
+typeof(formulas_cv2)
+
+# Note that sapply() works like lapply, but it simplifies the output
+formulas_cv3 <- sapply(formulas, cv_fun)
+typeof(formulas_cv3)
+all.equal(simplify(formulas_cv2), formulas_cv3)
+```
+
+# Method 2. Forward Stepwise Selection 
+
+Implement algorith 6.2 from the ISLR. Answer the following questions:
+
+1. Which model does the algorithm select at each step (i.e. for each level of complexity)?
+2. Which model does the algorithm select as "best" overall? Is it the same model selected by the "Best Subset Selection" method above? 
+3. Briefly discuss advantages and disadvanteges of each method.
+
+Implementation notes:
+
+i. For Step 2(b) of Algorithm 6.2, you should define *best* as having either the smallest MSE or the smallest LOOCV MSE. Note that it turns out to be okay to use in-smaple MSE here because you are comparing models that have the same degree of complexity. 
+ii. For Step 3 of Algorithm 6.2, you should define *best* as having the smallest LOOCV MSE.
+iii. Advanced and optional: entirely automate the implementation of the algorithm so that all you provide is a set of potential predictors. The selection of models at each step and at the end should be handled automatically.
+
+```{r}
+# M0: constant only model (i.e. no predictors)
+f0_1
+cv_fun(f0_1)
+# DriversKilled ~ 1
+glm_0 <- glm(f0_1,data=seatbelts)
+formula_cv_0 <- cv.glm(seatbelts, glm_0)$delta[1]
+
+# M1: models with 1 predictor
+formula1 <- list(f1_1, f1_2, f1_3, f1_4)
+formula_cv_1 <- lapply(formula1, cv_fun)
+best_model1 <- which.min(formula_cv_1)
+formula1[[best_model1]]
+# Answer: With one variable, Model “DriversKilled ~ PetrolPrice” is selected as the best model since it has the smallest MSE.
+
+# M2: models with 2 predictors
+f2_1_1 <- formula(DriversKilled ~ PetrolPrice + kms)
+f2_2_2 <- formula(DriversKilled ~ PetrolPrice + kms2)
+f2_3_3 <- formula(DriversKilled ~ PetrolPrice + law)
+formula2 <- list(f2_1_1,f2_2_2,f2_3_3)
+formula_cv_2 <- lapply(formula2, cv_fun)
+best_model2 <- which.min(formula_cv_2)
+formula2[[best_model2]]
+# Answer: With two variables, Model “DriversKilled ~ PetrolPrice + kms2” is selected as the best model since it has the smallest MSE.
+
+# M3: models with 3 predictors
+f3_1_1 <- formula(DriversKilled ~ PetrolPrice + kms2+ kms)
+f3_2_2 <- formula(DriversKilled ~ PetrolPrice + kms2+ law)
+formula3 <- list(f3_1_1, f3_2_2)
+formula_cv_3 <- lapply(formula3, cv_fun)
+best_model3 <- which.min(formula_cv_3)
+formula3[[best_model3]]
+# Answer: With three variables, Model “DriversKilled ~ PetrolPrice + kms2 + law” is selected as the best model since it has the smallest MSE.
+
+# M4: models with 4 predictors
+f4_1_1 <- formula(DriversKilled ~ law + PetrolPrice + kms + kms2)
+glm_0_ <- glm(f4_1_1,data=seatbelts)
+formula_cv_4 <- cv.glm(seatbelts, glm_0_)$delta[1]
+formula_cv_4
+
+#compare MSE in the four models
+smallest_mse <- c(formula_cv_1[[best_model1]],formula_cv_2[[best_model2]],formula_cv_3[[best_model3]],formula_cv_4, formula_cv_0)
+min(smallest_mse)
+which.min(smallest_mse)
+
+# Answer: In all of the four steps, the best model is "the model that regresses " DriversKilled ~ PetrolPrice + kms2 + law". This is the same as the selection above by the "Best Subset Selection" method.
+
+# Comparison:
+# Advantage of Stepwise Selection: Using this approach we could decrease the numbers of calculation of MSE we need to do.
+# Disadvantage of Stepwise Selection: Each step is depending on the former steps. So the best model we come out using this method may not be the best compared to all possible models.
+
+```
+
+##Method 3. Backward Stepwise Selection: 
+
+Implement algorith 6.3 from the ISLR. Answer the following questions:
+
+1. Which model does the algorithm select at each step (i.e. for each level of complexity)?
+2. Which model does the algorithm select as "best" overall? Is it the same model selected by the two methods above? 
+3. According to the textbook, what is one limitation of backward stepwise selection that is not a limitation of forward stepwise selection?
+
+Implementation notes:
+
+i. For Step 2(b) of Algorithm 6.3, you should define *best* as having either the smallest MSE or the smallest LOOCV MSE. Note that it turns out to be okay to use in-smaple MSE here because you are comparing models that have the same degree of complexity. 
+ii. For Step 3 of Algorithm 6.3, you should define *best* as having the smallest LOOCV MSE.
+iii. Advanced and optional: entirely automate the implementation of the algorithm so that all you provide is a set of potential predictors. The selection of models at each step and at the end should be handled automatically.
+
+```{r}
+#model with 4 predictors
+f4_1b <- formula(DriversKilled ~ law + PetrolPrice + kms + kms2)
+glm_1 <- glm(f4_1b,data=seatbelts)
+formula4_cv <- cv.glm(seatbelts, glm_1)$delta[1]
+
+#model with 3 predictors
+f3_1b <- formula(DriversKilled ~ law + PetrolPrice + kms)
+f3_2b <- formula(DriversKilled ~ law + PetrolPrice + kms2)
+f3_3b <- formula(DriversKilled ~ law + kms2 + kms)
+f3_4b <- formula(DriversKilled ~ kms2 + PetrolPrice + kms)
+formula3b <- list(f3_1b, f3_2b, f3_3b, f3_4b)
+formula3b_cv <- lapply(formula3b, cv_fun)
+best_model_3b <- which.min(formula3b_cv)
+formula3b[[best_model_3b]]
+
+# Answer: With three variables, Model “DriversKilled ~ PetrolPrice + kms2 + law” is selected as the best model since it has the smallest MSE.
+
+#model with 2 predictors
+f2_1b <- formula(DriversKilled ~ law + PetrolPrice )
+f2_2b <- formula(DriversKilled ~ law + kms2)
+f2_3b <- formula(DriversKilled ~ PetrolPrice + kms2)
+formula2b <- list(f2_1b, f2_2b, f2_3b)
+formula2b_cv <- lapply(formula2b, cv_fun)
+best_model_2b <- which.min(formula2b_cv)
+formula2b[[best_model_2b]]
+
+# Answer: With two variables, Model “DriversKilled ~ PetrolPrice + kms2” is selected as the best model since it has the smallest MSE.
+
+#model with 1 predicor
+f1_1b <- formula(DriversKilled ~ PetrolPrice)
+f1_2b <- formula(DriversKilled ~kms2)
+formula1b <- list(f1_1b, f1_2b)
+formula1b_cv <- lapply(formula1b, cv_fun)
+best_model_1b <- which.min(formula1b_cv)
+formula1b[[best_model_1b]]
+
+# Answer: With one variables, Model “DriversKilled ~ PetrolPrice” is selected as the best model since it has the smallest MSE.
+
+#model with 0 predictor
+f0_1
+
+glm_00 <- glm(f0_1,data=seatbelts)
+formula0_cv <- cv.glm(seatbelts, glm_00)$delta[1]
+
+#compare MSE in the four models
+smallest_mse2 <- c(formula1b_cv[[best_model_1b]],formula2b_cv[[best_model_2b]],formula3b_cv[[best_model_3b]],formula4_cv, formula0_cv)
+min(smallest_mse2)
+which.min(smallest_mse2)
+
+# Answer: In all of the four steps, the best model is "the model that regresses " DriversKilled ~ PetrolPrice + kms2 + law". This is the same model as that was selected by the two methods above.
+
+# Comparison: The limitation of backward stepwise selection is that when we have many variables but less observations (the number of observations is less than the number of variables), we cannot use backward stepwise selection, but in this situation we can use forward stepwise selection. 
+
+```
+

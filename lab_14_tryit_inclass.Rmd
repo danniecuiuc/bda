@@ -1,0 +1,232 @@
+---
+title: "Lab 14 -- Random Forests, Bagging and Boosting"
+header-includes:
+   - \usepackage{amsmath}
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    theme: simplex
+    fig_caption: true
+    number_sections: false
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Why aggregate multiple trees?
+In the previous lecture we saw that decision trees have some advantages over more classical approaches, such as being graphically displayed, what makes it easier to explain and interpret. However, trees can be non-robust and not deliver as accurate predictions as the other regressions and classification methods. We will see in the lecture how building multiple trees can help with these problems. 
+
+# Bagging
+Bagging, also known as bootstrap or aggregation, is a procedure to reduce the variance of the statistical learning method. It can be applied to many methods, but it is especially useful for trees. This is due to the fact that trees can have quite a large variance, which means that we can get very different trees from different samples of the data (this does not happen as often with regression analysis).
+
+The idea behind bagging is that, if we had multiple training datasets, we could build a tree in each of those and take the average of the estimates from each tree. This average estimate would present a smaller variance. Since we do not have multiple training datasets, we build them by boostraping - i.e., we take *B* repeated samples from our training dataset.
+
+The next step is to build a tree in each - we let these trees grow deep without pruning, which reduces the bias in the estimate (we do not have to worry so much with variance in these individual trees). Then simply take the average of the *B* estimated trees.
+
+The advantage of bagging is the improved accuracy. The disadvantage is that the interpretation becomes more complicated - we can no longer represent the statistical learning procedure using the visual aid of a single tree. An alternative is to show the importance of each variable in the bagging procedure by reporting how the *RSS* decreases due to splits over a certain predictor - the larger the value, the more important the predictor.
+
+The error estimation in bagging is built from the process itself. In each bootstrapped sample, some observations are left out (these are called *out-of-bag* observations). We predict the response for each observation using the trees on which this observation was out-of-bag, and then take the average among them.  The resulting OOB errors is an estimate of the test error of the model. 
+
+# Random forests
+Random forests build decision trees based on bagging, but with a feature that forces the trees to be different: each time a split is considered in the tree, a random sample of the predictors is made available, instead of all predictors. 
+
+The idea is to decorrelate the tree: even if a very strong predictor exists, it will not be allowed in all splits, forcing the model to choose among the other predictors. Usually, the amount of predictors available is set to the square root of the total number of predictors. 
+
+# Boosting
+Boosting is a general method similar to bragging, but with important differences. First, instead of building trees separately in each boostrapped dataset, the trees are grown sequentially, each using the information from the previous tree. Second, instead of drawing random samples from the dataset, boosting uses modified versions of the same dataset.
+
+The idea is to build trees slowly, to avoid overfitting the data. We start with a decision tree; then, fit another tree to the *residuals* of our first tree - remember that the residuals contain the part of the outcome *Y* not explained by the model. Then we add this new tree to the original one to update the residuals, and so on.
+
+In boosting, we have to determine the number of trees *B*, which we do using cross-validation; the shrinkage paramenter \lambda, which controls the rate at which boosting learns; and the number *d* of splits, which control the complexity of the trees built from the residuals -*d* is also the maximum number of variables in boosted model.
+
+# Application: Boston Housing Data
+
+## Getting Started
+In this section we will work with the Boston Housing Data, which consist of housing values in suburbs of Boston taken from the 1970 Census. The data set also contains other information that may affect house prices, such as the crime rate in the area and the proportion of owner-occupied houses. The data set and data dictionary can be found at [Boston Housing Data](https://archive.ics.uci.edu/ml/machine-learning-databases/housing/).
+
+In RStudio, create a folder called `lab-11` and set this folder as your working directory.  Download to your lab directory the `housing.data` and `housing.names` files from the Boston Housing Data archive to a sub-directory of called `data_housing`. You can perform these steps manually, but a more reproducible approach is to perform these steps using R commands.
+
+This assignment requires the R packages `rpart`, `rpart.plot`, `randomForest` and `gbm` to be installed. Install these packages, if necessary.
+
+```{r, message=FALSE, warning=FALSE}
+library(rpart)
+library(rpart.plot)
+library(tidyverse)
+library(randomForest)
+library(gbm)
+
+# Make data directory
+dir.create("data_housing")
+
+# Download data
+"https://archive.ics.uci.edu/ml/machine-learning-databases/housing/housing.data" %>% 
+  download.file("data_housing/housing.data")
+
+# Download data dictionary
+"https://archive.ics.uci.edu/ml/machine-learning-databases/housing/housing.names" %>% 
+  download.file("data_housing/housing.names")
+
+# Variable names from housing.names
+variables <- c("CRIM", "ZN", "INDUS",  "CHAS", "NOX", "RM", "AGE", 
+               "DIS", "RAD", "TAX", "PTRATIO", "B", "LSTAT", "MEDV")
+
+# Read data
+housing_data <- read_table("data_housing/housing.data", col_names = variables)
+names(housing_data)
+```
+
+## Data prep
+We start by spliting the data in the training and test datasets. 
+
+```{r, message=FALSE, warning=FALSE}
+# The data is complete, so no need to remove observations
+sum(!complete.cases(housing_data))
+
+# Split in the training and testing data sets
+set.seed(1)
+train_housing_data <- sample_frac(housing_data, 0.5)
+test_housing_data <- setdiff(housing_data, train_housing_data)
+
+# Linear model form
+linear_form <- formula(MEDV ~ .^2) #.^2 all variables in the dataset, 2 means interactions : x1+x2+x1*x2
+model.matrix(linear_form, data = train_housing_data) %>% colnames()
+# ordinarally squared or lasso model?
+model.matrix(linear_form, data = train_housing_data)
+
+# Tree model form
+tree_form <- formula(MEDV ~ .)
+model.matrix(tree_form, data = train_housing_data) %>% 
+  colnames()
+
+# Tree natually allow non-linear between predictors and outcoms (Pros) - no need to add interactions between variables.. no need to construct non-linear relationship by myself.
+```
+
+## Benchmarks
+### Linear regression
+Evaluate the performance of linear regression.
+```{r, message=FALSE, warning=FALSE}
+# Estimate linear regression
+lm_housing <- glm(linear_form, data = train_housing_data)
+
+# Predict in the test data
+lm_predict <- predict(lm_housing, newdata = test_housing_data)
+
+# MSE
+mean((lm_predict - test_housing_data$MEDV)^2)
+```
+
+### Lasso linear regression
+Evaluate the performance of linear regression with Lasso penalization.
+```{r, message=FALSE, warning=FALSE}
+library(glmnet)
+set.seed(1)
+
+# Estimate Lasso
+x <- model.matrix(linear_form, data = train_housing_data)
+y <- train_housing_data$MEDV
+lasso_housing <- cv.glmnet(x, y)
+#when use glmnet we should build the model matrix first for myself.
+
+# Predict in the test data
+x_test <- model.matrix(linear_form, data = test_housing_data)
+lasso_predict <- predict(lasso_housing, newx = x_test, s="lambda.min")
+# pick the lambda which minimizes the cross validated MSE
+
+# MSE
+mean((lasso_predict - test_housing_data$MEDV)^2)
+```
+
+### Decision tree
+As a benchmark,  we replicate the model of a simple tree we did in the last lecture.
+```{r, message=FALSE, warning=FALSE}
+# Fit the tree 
+tree_housing <- rpart(tree_form, data = train_housing_data)
+
+# Predict in the test data
+tree_predict <- predict(tree_housing, newdata = test_housing_data)
+
+# MSE
+mean((tree_predict - test_housing_data$MEDV)^2)
+```
+
+
+## Bagging
+Fit the tree using the `randomForest()` function. Bagging follows the same algorithm as random forests, without any restriction on the number of predictors - this is indicated in the argument `mtry`.
+
+In bagging we cannot plot the tree, but we can look at the importance of each variable using the `importance()` function. The first column shows the increase in the MSE if the variable were excluded from the model. The second is the total decrease in node impurity from splits over that variable.
+
+Next we test the model in our test dataset, and calculate the MSE.
+
+```{r, message=FALSE, warning=FALSE}
+# Fit the tree 
+bag_housing <- randomForest(tree_form, 
+                            data = train_housing_data, 
+                            mtry = 13, 
+                            importance = TRUE)
+# mtry = number of predictors we have  (13)
+
+# Call the object to see the number of trees and the variables used in each split
+bag_housing
+
+# Check the importance of each variable
+importance(bag_housing)
+
+# Or visually - LSTAT and RM most important
+varImpPlot(bag_housing)
+# it suggests what the impact would be if we exclude one variable
+
+# Test the model
+bag_predict <- predict(bag_housing, test_housing_data)
+
+# MSE
+mean((bag_predict - test_housing_data$MEDV)^2)
+
+```
+
+## Random forest
+To build the random forest model, we follow the steps above but limit the number of predictors that can be use in each split to 6.
+
+The importance of the variables is very similar between RF and bagging.
+
+```{r}
+# Number of predictors to be considered = 6
+rf_housing <- randomForest(tree_form, data = train_housing_data, mtry=6, importance=TRUE)
+
+# Importance
+varImpPlot(rf_housing)
+
+# MSE in the test data
+rf_predict <- predict(rf_housing, newdata = test_housing_data)
+
+# MSE
+mean((rf_predict - test_housing_data$MEDV)^2)
+```
+
+## Boosting
+For boosting we use the `gbm` package. Notice that in the function we have to specify the distribution we are worked with - we choose `distribution = "gaussian"` for regression models, and `distribution = "bernoulli"` for classification problems. The default number of trees is 100, and we will increase that to 5000. We can also change the interaction depth - which is the maximum nodes per tree. The default for this value is set to 1. Another important value is `shrinkage`, or the learning rate. The smaller this rate, the higher the penalty for future iterations - or smaller the incrementing steps, which keeps the model more conservative.   
+
+Remember to set the seed for this model, as random samples are drawn for crossvalidation.
+
+```{r}
+set.seed(1)
+
+# Boosting
+boost_housing <- gbm(tree_form, 
+                     data = train_housing_data, 
+                     distribution = "gaussian", 
+                     n.trees = 5000, 
+                     interaction.depth = 5) 
+
+# Summary
+summary(boost_housing)
+
+# Test the model (n.trees has to be specified)
+boost_predict <- predict(boost_housing, test_housing_data, n.trees = 5000)
+
+# MSE
+mean((boost_predict - test_housing_data$MEDV)^2)
+
+
+```

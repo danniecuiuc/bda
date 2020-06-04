@@ -1,0 +1,215 @@
+---
+title: "Lab 06 - Linear Regression"
+author: Danni Chen
+date: Assignment due by 11:59PM on Sunday, September 22, 2019
+output:
+  html_document:
+  theme: simplex
+  fig_caption: true
+---
+
+# Getting started
+In this assignment, you will use linear regression to analyze the Freddie Mac data. To make sure you are using a properly cleaned file, **use the file called `cleaned_Freddie_Mac.Rdata` that we provide on S3 for this assignment.**
+
+Start by loading `tidyverse` package. Run the code below to load the Freddie Mac data you downloaded from S3, and to keep only one record per loan.
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+load("data/cleaned_Freddie_Mac.Rdata")
+
+# Keep one record per loan
+loan_data <- orig_svcg %>% 
+  filter(first_record == TRUE) 
+
+# Remove the orig_svcg object 
+rm(orig_svcg)
+```
+
+# Problem 1: Visualize the data
+
+1. Use `ggplot` to create a scatter plot of the relationship between fico scores (x-axis) and the original interest rate (y-axis). Each observation should be a separate point of size 2 with a semi-transparent fill color of "firebrick." Add a linear trendline to the graph using `geom_smooth`. 
+
+    What does this plot suggest about the relationship between an individual's credit score and mortgage interest rate?
+```{r, warning=FALSE}
+raw <- loan_data %>%
+  ggplot(aes(x=fico, y=int_rt))+
+  geom_point(size = 2, color = "firebrick", alpha = 1/2)+
+  geom_smooth(method = "lm", color = "blue", size = 0.9, se=FALSE, na.rm = TRUE)
+raw
+
+```
+
+2. Create a bin scatter plot of the relationship between fico scores (x-axis) and the original interest rate (y-axis). To do so, add to `loan_data` a factor variable called `fico_bin` which bins `fico` into ventiles (20 groups, each containing about 5% of the sample). **Hint: use the `cut` command and specify the break points using the `quantile()` command.** 
+
+    Calculate the mean value of `fico` and `int_rt` for each of these bins and plot the resulting points using the same formatting options as the scatter plot above (except don't use transparency).
+
+    Describe at least one advantage and disadvantage of the bin scatter plot compared to the raw scatter plot above.
+```{r, warning=FALSE}
+# Add fico_bin variable to loan_data
+loan_data <- loan_data %>%
+  mutate(fico_bin = cut(fico, quantile(fico, probs = seq(from = 0, to = 1, by = 0.05), na.rm = TRUE)))
+
+# Is the fico_bin variable a factor variable?
+is.factor(loan_data$fico_bin)
+# Answer: Yes, it is a factor variable.
+
+# Tabulate the number of observations in each fico_bin group
+table(loan_data$fico_bin)
+
+# Generate bin scatter
+sum_bin <- loan_data %>% 
+  group_by(fico_bin) %>% 
+  summarise(mean_fico = mean(fico), mean_int = mean(int_rt))
+
+loan_data %>%
+  ggplot(aes(x=fico, y=int_rt))+
+  geom_point(size = 2, color = "firebrick", alpha = 1/30)+
+  geom_point(data = sum_bin, 
+             aes(x = mean_fico, y = mean_int),
+             size = 2, 
+             color = "firebrick",
+             geom="point")+
+  geom_smooth(method = "lm", color = "blue", size = 0.9, se=FALSE, na.rm = TRUE)
+  
+
+# Answer: (1) The advantage of the bin scatter plot is that it shows the relationship between the variable of "fico" and "int_rt" in different groups of statistics. In this case, the binned scatter plot could better describe the difference among people with different credit score ranges. (2) The disadvantage would be that, we can not see direcetly where the original data lies and it might also be including more outliersn in a linear regression model.
+```
+
+# Problem 2: Linear Regression and Group Means
+
+1. Use the `lm` command to estimate an "intercept only" linear model where the outcome is `int_rt`. Assign the output of the model to a variable called `lm_1`. Below each of the following comments, perform the steps requested.
+
+```{r}
+# Estimate the requested linear model
+lm_1 <- lm(int_rt ~ 1, data = loan_data)
+
+# Summarize the results of the linear regression using the summary() command
+lm_1 %>%
+  summary()
+
+# Is lm_1 a list?
+typeof(lm_1)
+# Answer: Yes, lm_1 is a list.
+
+# What are the elements of lm_1?
+names(lm_1)
+# Answer: The elements of lm_1 include "coefficients", "residuals", "effects", "rank", "fitted.values", "assign", "qr", "df.residual", "na.action", "xlevels", "call", "terms", "model".
+
+# Extract the element "coefficients" from lm_1 and display the contents
+lm_1$coefficients
+
+# Using only "coefficients" and loan_data, create a variable called y_hat containing model predicted outcomes.
+loan_data <- loan_data %>% 
+  mutate(y_hat=lm_1$coefficients)
+
+# Use the all.equal() command to confirm that your variable equals the "fitted.values" element of lm_1.
+all.equal(loan_data$y_hat, lm_1$fitted.values, check.names = FALSE)
+
+# What is the sample mean of int_rt?
+mean_int<-mean(loan_data$int_rt, na.rm = TRUE)
+mean_int
+
+# What is the relationship between the sample mean of int_rt and the coefficient estimated by your model? 
+# Answer: he sample mean of int_rt and the coefficient estimated by the model should be the same.
+
+#  Use the all.equal() and stopifnot() commands to confirm the relationship you assert. 
+stopifnot(all.equal(lm_1$coefficients, mean_int, check.names = FALSE))
+
+# Use ggplot with two layers:
+#   a) a raw scatter plot of int_rt (y-axis) vs. fico (x-axis). 
+#   b) a red line plot of model-predicted values of int_rt (y-axis) vs. fico (x-axis). 
+
+ggplot(loan_data, aes(x=fico, y=int_rt))+
+  geom_point(color = "firebrick", alpha = 1/3, na.rm = TRUE) +
+  geom_abline(intercept=lm_1$coefficients, slope = 0, color = "blue")
+
+```
+
+2. Use the `lm` command to estimate linear model where the outcome is `int_rt` and the only predictor is the factor variable `fico_bin`. Do not include an intercept in the model. Assign the output of the model to a variable called `lm_bin_0`. Below each of the following comments, perform the steps requested.
+
+```{r}
+# Estimate the requested linear model
+lm_bin_0 <- lm(int_rt ~ 0 + fico_bin, data = loan_data)
+
+# Summarize the results of the linear regression using the summary() command
+summary(lm_bin_0)
+
+# Using lm_bin_0 element "coefficients", calculate how many coefficients were estimated.
+length(lm_bin_0$coefficients)
+# Answer: 20 coefficients were estimated with corresponding to the 20 fico bins.
+
+# Using only "coefficients" and loan_data, create a variable called y_hat containing model predicted outcomes.
+
+loan_data <- loan_data %>% 
+  filter(!is.na(fico_bin)) %>% 
+  mutate(bin_ID=as.numeric(fico_bin)) %>% 
+  left_join(tibble(bin_ID=c(1:20), y_estimate=lm_bin_0$coefficients), by="bin_ID")
+
+y_hat <- loan_data$y_estimate
+
+# Use the all.equal() command to confirm that your variable equals the "fitted.values" element of lm_bin_0.
+all.equal(y_hat, lm_bin_0$fitted.values, check.names=FALSE)
+
+# What is the mean of int_rt for each group of fico_bin?
+loan_data %>%
+  filter(!is.na(fico_bin))%>%
+  group_by(fico_bin) %>%
+  summarise(mean_int_group = mean(int_rt, na.rm = TRUE))
+
+# What is the relationship between the grouped sample means of int_rt and the coefficients estimated by your model? 
+# Answer: They should be the same.
+
+#  Use the all.equal() and stopifnot() commands to confirm the relationship you assert. 
+x <- c(lm_bin_0$coefficients)
+
+y <- loan_data %>% 
+  group_by(fico_bin) %>%
+  summarise(mean_int=mean(int_rt, na.rm = TRUE))
+
+z <- c(y$mean_int[1:20])
+
+stopifnot(all.equal(sort(z), sort(x), check.names = FALSE))
+
+# Use ggplot with two layers:
+#   a) a raw scatter plot of int_rt (y-axis) vs. fico (x-axis). 
+#   b) a red line plot of model-predicted values of int_rt (y-axis) vs. fico (x-axis). 
+
+ggplot(loan_data, aes(x=fico, y=int_rt))+
+  geom_point(color = "firebrick", alpha = 1/10, na.rm = TRUE)+
+  geom_line(aes(x = fico, y=y_estimate), color="red",size=0.8)
+
+```
+
+3. Re-estimate the factor variable model in the previous step, except now include an intercept in the model. Assign the output of the model to a variable called `lm_bin_1`. Below each of the following comments, perform the steps requested.
+
+```{r}
+# Estimate the requested linear model
+lm_bin_1 <- lm(int_rt ~ 1 + fico_bin, data = loan_data)
+
+# Summarize the results of the linear regression using the summary() command
+summary(lm_bin_1)
+
+# Using only "coefficients" and loan_data, create a variable called y_hat containing model predicted outcomes.
+
+a <- c(lm_bin_1$coefficients[1])
+b <- c(lm_bin_1$coefficients[2:20])
+c <- a+b
+e <- c(c,a)
+
+y_estimate <- c(a,c)
+
+loan2 <- loan_data %>% 
+  filter(!is.na(fico_bin)) %>% 
+  mutate(id=as.numeric(fico_bin)) %>% 
+  left_join(tibble(id=c(1:20), y_estimate), by="id")
+
+y_hat <- loan2 $y_estimate
+  
+# Use the all.equal() command to confirm that your variable equals the "fitted.values" element of lm_bin_1.
+all.equal(y_hat, lm_bin_1$fitted.values, check.names=FALSE)
+
+# How do the fitted values in lm_bin_0 compare to the fitted values in lm_bin_1?
+#Answer: They are equal.
+
+#  Use the all.equal() and stopifnot() commands to confirm the relationship you assert. 
+statement <- all.equal(lm_bin_0$fitted.values, lm_bin_1$fitted.values)
+```

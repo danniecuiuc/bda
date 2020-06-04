@@ -1,0 +1,183 @@
+---
+title: "Lab 13 -- Trees"
+author: Danni Chen
+date: Assignment due by 11:59PM on Sunday, 10/20/2019
+output:
+  html_document:
+  theme: simplex
+fig_caption: true
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Getting started
+In this assignment, you will apply a tree-based model to the Freddie Mac Data, building on the models discussed in class.
+
+Start by loading the packages `tidyverse`, `tree` and `rpart.plot` (optional). Also load the Freddie Mac data you downloaded from S3, per the assignment instructions. The data looks at loans 48 months after the scheduled first month of payment.  
+
+Run the code below to prepare the data by making the same changes you did in Lab 09 and to drop observations with any missing from the dataset. Make sure the variable `d180` is a factor - you will need this to make the predictions.
+
+```{r}
+library(tidyverse)
+library(tree)
+library(rpart.plot)
+
+# Load data into R workspace
+load("orig_svcg_default_2015_Freddie_Mac.Rdata")
+
+# Prepare the data set
+orig_svcg_2005 <- orig_svcg_2005 %>%
+  mutate(msa = ifelse(!is.na(cd_msa), 1, 0),
+         other_services = ifelse(servicer_name == "Other servicers", 1, 0))
+
+orig_svcg_2005$d180 <- factor(orig_svcg_2005$d180)
+
+orig_svcg_2005 <- orig_svcg_2005 %>% 
+  select(-id_loan, -servicer_name, -cd_msa) %>%
+  filter(complete.cases(.))
+```
+
+In all problems, modify the complexity parameter of the fit. This parameter is a threshold value for a decrease in overall lack of fit for any split. The cp's default value is 0.01, but for complex problems you can relax it, allowing for more splits to happen.
+
+In problems 1-3, you will work with a training dataset. In problem 4, you will evaluate the tree using the test dataset. Remember to define such datasets before you start working with the data.
+
+# Problem 1: Fit the model
+In this problem you will fit a model using a decision tree to predict default, here represented by the variable `d180`. The predictors included in your model should be `current_upb` `fico` `flag_fthb` `cnt_units` `occpy_sts` `prop_type` `cnt_borr` `msa`  `other_services`. Make sure that any categorical variables are entered into the model as factor variables.
+
+Set the random seed equal to 1, then estimate the decision tree using the `rpart` command with the complexity parameter threshold set to `cp = 0.001` as described above.
+
+* What is the size of this tree (i.e. how many nodes does the tree have)? Discuss.
+
+* What is the proportion of cases of default and non-default in the root node?
+
+* Using the model you just estimated, what is the predicted probability of default of a mortgage with the following characteristics: fico = 700, current UPB = 100,000, first time homebuyer, one-unit property, property type = single family home, number of borrowers = 2,  not living in a MSA, servicer of the mortgage not included in the category "other servicers", occupied by the owner? And the class of prediction (default or non-default)?
+
+```{r}
+set.seed(1)
+train_id <- sample(nrow(orig_svcg_2005), nrow(orig_svcg_2005)/2)
+train_data <- orig_svcg_2005[train_id,]
+test_data <- orig_svcg_2005[-train_id,]
+
+tree_orig_svcg <- rpart(d180 ~ current_upb + fico + flag_fthb + cnt_units + occpy_sts + prop_type + cnt_borr + msa + other_services, data = train_data, cp = 0.001)
+
+summary(tree_orig_svcg)
+printcp(tree_orig_svcg)
+
+# Answer:
+# (1) From the summary, we know that the node of the tree is 1. So the size of the tree is 1.
+# (2) The proportion of cases of default and non-default is 10.7% and 89.3% respectively.
+
+test_case <- tibble(fico = 700, current_upb = 100000, flag_fthb = "Y", cnt_units = 1, prop_type = "SF", cnt_borr = 2, msa = 0, other_services = 0, occpy_sts = "O")
+
+predict(tree_orig_svcg, test_case, "prob")[,"1"]
+predict(tree_orig_svcg, test_case, "class")
+# Answer: 
+# Probability: The predicted probability of default of a mortgage with the characteristics mentioned is still 10.7% showed in the "prob" prediction result (because there is only one node in this tree so the probability is the same as propotion of the two cases calculated above) 
+# Class: The class of prediction with the characteristics mentioned is "non-default" (because the outcome of "class" prediction is "0".)
+
+```
+
+# Problem 2: Loss matrix
+In Problem 1 you saw that building a nice decision tree for credit risk data is hard. Now you will apply a correction method to improve your fit by including a "loss matrix." 
+
+A loss matrix changes the penalization for misclassifying a default as a non-default, and of misclassifying a non-default as a default. It is reasonable to expect a bank to be more worried about the former, therefore you will increase that cost of misclassification.
+
+Fit the same tree as Problem 1 but now add the option `parms = list(loss = matrix(c(0, 10, 1, 0), ncol = 2))`. This changes the loss matrix by increasing ten times the penalization for the misclassification we just mentioned. See the help function of the package to see the details.
+
+* What is the size of this tree (i.e. how many nodes does the tree have)? Discuss how this compares to the size of tree from Problem 1, and why.
+
+* What is the most important variable in this tree for prediction? At which value does it split the data?
+
+* Using the model you just estimated, what is the predicted probability of default of a mortgage with the following characteristics: fico = 700, current UPB= 100,000, first time homebuyer, one-unit property, property type = single family home, number of borrowers = 2,  not living in a MSA, servicer of the mortgage not included in the category "other servicers", occupied by the owner?
+
+```{r}
+tree_origsvcg_2 <- rpart(d180 ~ current_upb + fico + flag_fthb + cnt_units + occpy_sts + prop_type + cnt_borr + msa + other_services, data = train_data, cp = 0.001, parms = list(loss = matrix(c(0, 10, 1, 0), ncol = 2)))
+
+printcp(tree_origsvcg_2)
+summary(tree_origsvcg_2)
+
+prp(tree_origsvcg_2, extra = 1, box.palette = "auto")
+
+# Answer: From the summary, we can see that:
+# (1) The size of the tree is "nsplit + 1" = 46 + 1 = 47. The size of the tree is bigger than the tree in problem one. Because we increase the penalization for misclassification so that we need more split to avoid misclassfication, so the number of splits is larger.
+# (2) The most important variable is "fico". And the primary splits is fico < 746.5 and fico >= 746.5. So at value of 746.5 fico split the data.
+
+test_case
+predict(tree_origsvcg_2, test_case, type = 'prob')[,"1"]
+#Answer: The predicted probability of default of a mortgage with the specific characteristics mentioned is 14.71%.
+```
+
+# Problem 3: Prune the tree
+The treeyou obtained in problem 2 is quite large and complex, so in this exercise you will prune the tree to try to find the optimal tree with fewer splits. 
+
+1. Use the command `printcp` to find the best fit, using the cross-validation estimates of misclassication error `xerror`. The default option is a 10-fold CV. See `xval` in the details of `rpart.control` option.
+
+2. Plot the errors as a function of cp/number of splits by using `plotcp`.
+
+3. Use the correspondent `cp` value to prune the tree. 
+
+4. Plot the pruned tree.
+
+* Which is the optimal cp? What is the cross-validation error correspondent to this cp? 
+
+* How many nodes does the pruned tree have?
+
+* What is the most important variable in this tree? In which value does it split the data?
+
+* What is the probability of default of a mortgage with the following characteristics: fico = 700, current UPB= 100,000, first time homebuyer, one-unit property, property type = single family home, number of borrowers = 2,  not living in a MSA, servicer of the mortgage not included in the category "other servicers", occupied by the owner?
+
+* The column `rel error` reports the error computed in the training sample (more precisely, it is the ratio of the error in relation to the error root tree). What happens to this error as the number of splits increases? What does it say about the importance of testing the model in a sample different from the training sample?
+
+```{r}
+# 1. Find the best fit
+printcp(tree_origsvcg_2)
+index <- which.min(tree_origsvcg_2$cptable[ , "xerror"])
+tree_min <- tree_origsvcg_2$cptable[index, "CP"]
+tree_min
+
+# 2. Plot the errors
+plotcp(tree_origsvcg_2)
+
+# 3. Prune the tree 
+pruned_tree <- prune(tree_origsvcg_2, cp = tree_min)
+summary(pruned_tree)
+# Answer: From the summary we can see that the optimal size of the tree is 23 (=nsplit+1).
+
+# 4. Plot the pruned tree
+prp(pruned_tree, extra = 1, box.palette = "auto")
+
+# The corresponding cross-validation error
+tree_cv <- tree_origsvcg_2$cptable[index, "xerror"]
+tree_cv
+
+# The probability
+predict(pruned_tree, test_case, type = 'prob')[[2]]
+
+# Answer: 
+# (1) The optimal CP is 0.001399217.
+# (2) The corresponding cross-validation error is 3.814.
+# (3) The tree has 23 nodes.
+# (4) Fico is the most important variable and at value of 746.5 fico splits the data.
+# (5) The probability of default of a mortgage with the mentioned characteristics is 14.7% (shown in the result above).
+# (6) As the number of splits increases, the rel error (in sample error) decreases. It implies that if we only use the training data the rel error is always decreasing. But if we use test data (out of sample) to test the model, xerror does not necessary decrease as the splits increase. So if we want to find the optimal CP to find the minimum xerror, we should use test the model in a sample other than the training sample. 
+```
+
+# Problem 4: Accuracy of the model
+This problem is optional. If you complete it, please email the professor to let him know!
+
+Using the pruned tree from problem 3, predict default in the test data. Build the [confusion matrix](https://en.wikipedia.org/wiki/Confusion_matrix), assigning to default any predicted probability of default larger than 20%. What is the accuracy of your model?
+
+```{r}
+predict_default <- predict(pruned_tree, test_data, type = "prob")
+
+confusion_matrix <- table(test_data$d180, as.numeric(predict_default[, 2] > 0.2))
+rownames(confusion_matrix) <- paste("Actual", c("not default", "default"))
+colnames(confusion_matrix) <- paste("Pred", c("not default", "default"))
+confusion_matrix
+
+accur <- sum(diag(confusion_matrix)) / nrow(test_data) 
+accur
+# Answer: The accuracy of my model is 0.8251612
+
+```

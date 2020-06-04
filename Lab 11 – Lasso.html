@@ -1,0 +1,385 @@
+
+  Lab 11 – Lasso
+
+
+        Renjun Li
+
+
+        Assignment due by 11:59PM on Friday, 10/11/2019
+
+
+  Getting started
+
+In this assignment you will apply Lasso techniques to predict the
+current unpaid balance in mortgages using the Single Family Loan-Level
+Data Set, from Freddie Mac. A description of the data can be found here
+<http://www.freddiemac.com/research/datasets/sf_loanlevel_dataset.html>.
+In the User Guide, the section |File Layout & Data Dictionary| contains the description of each variable in the data sets.
+
+Start by loading the packages |tidyverse|, |boot|, and |glmnet|. Also load the Freddie Mac data you downloaded from S3, per the
+assignment instructions. These data contain origination and loan
+performance information 48 months after the scheduled first month of
+payment for home mortages originated in 2005.
+
+Edit the code chunk below to complete the tasks described in the comments
+
+|# load required packages
+library(tidyverse)
+library(glmnet)
+library(boot)
+
+# Load data into R workspace
+
+load("data/orig_svcg_2005_48mo.Rdata")
+names(orig_svcg_2005)|
+
+|##  [1] "id_loan"        "svcg_cycle"     "current_upb"    "delq_sts"      
+##  [5] "fico"           "dt_first_pi"    "flag_fthb"      "dt_matr"       
+##  [9] "cd_msa"         "mi_pct"         "cnt_units"      "occpy_sts"     
+## [13] "cltv"           "dti"            "orig_upb"       "ltv"           
+## [17] "int_rt"         "channel"        "ppmt_pnlty"     "prod_type"     
+## [21] "st"             "prop_type"      "zipcode"        "loan_purpose"  
+## [25] "orig_loan_term" "cnt_borr"       "seller_name"    "servicer_name" 
+## [29] "flag_sc"|
+
+
+  Problem 1: Data cleaning
+
+In this exercise you will build a model to predict the fraction of a
+loan balance that remains upaid after 48 months. Add the following three
+variables to the |orig_svcg_2005| data frame:
+
+  *
+
+    |frac_unpaid|: that equals the fraction of the original upaid principal balance (|orig_upb|) that remains unpaid after 48 months (|current_upb|).
+
+  *
+
+    |msa|: equal to 1 if the mortgaged property is located in a MSA, and 0
+    otherwise. Drop the variable |cd_msa| from the data frame once you have created the |msa| variable.
+
+  *
+
+    |other_servicers|: equals 1 if the servicer name is in the category ‘other
+    servicers’, and 0 otherwise. Drop the variable |servicer_name| from the data frame once you have created the |other_servicers| variable.
+
+|# Add variable: frac_unpaid
+orig_svcg_2005 <- orig_svcg_2005 %>% 
+  mutate(frac_unpaid=(current_upb/orig_upb))
+  
+
+# Add variable: msa
+
+orig_svcg_2005 <- orig_svcg_2005 %>% 
+  mutate(msa=as.numeric(!is.na(cd_msa))) %>% 
+  select( -cd_msa)
+
+
+# Add variable: other_servicers
+orig_svcg_2005 <- orig_svcg_2005 %>% 
+  mutate(other_servicers=as.numeric(servicer_name=="Other servicers")) %>% 
+  select(-servicer_name)
+
+
+#delete NA in the dataset
+orig_svcg_2005 <- orig_svcg_2005 %>% 
+  filter(!is.na(fico)) %>% 
+  filter(!is.na(orig_upb)) %>% 
+  filter(!is.na(mi_pct)) %>% 
+  filter(!is.na(dti)) %>% 
+  filter(!is.na(ltv)) %>% 
+  filter(!is.na(int_rt)) %>% 
+  filter(!is.na(frac_unpaid)) %>% 
+  filter(!is.na(flag_fthb))|
+
+
+  Problem 2: Model estimation
+
+Estimate models using three sets of potential controls. All three sets
+of controls should contain linear terms in |msa|, |other_servicers|, and |flag_fthb|. The remaining potential predictors in the sets should be as follows:
+
+  * Potential predictor set 1: add linear terms for |fico|, |orig_upb|, |mi_pct|, |dti|, |ltv|, and |int_rt|.
+  * Potential predictor set 2: add 5th order polynomials for |fico|, |orig_upb|, |mi_pct|, |dti|, |ltv|, and |int_rt|.
+  * Potential predictor set 3: add 10th order polynomials for |fico|, |orig_upb|, |mi_pct|, |dti|, |ltv|, and |int_rt|.
+
+|library(tidyverse)
+library(glmnet)
+
+# Potential predictors
+
+# 
+# Add polynomials in each of the following variables
+#   original fico score
+#   original UPB
+#   original primary mortgage insurance
+#   original debt-to-income
+#   original loan-to-value
+#   original interest rate
+#   
+# Add the following variables in linearly
+#   msa
+#   other_servicers
+#   flag_fthb
+non_poly <- c("msa", "other_servicers", "flag_fthb")
+polly <- c("fico","orig_upb", "mi_pct", "dti", "ltv", "int_rt")
+
+poly_0 <- paste("frac_unpaid~", paste0(c(non_poly, polly), collapse = "+"))
+
+poly_5 <- paste("frac_unpaid~", paste0("poly(", polly, ", 5, raw = TRUE)", collapse = "+"), "+", paste0(non_poly, collapse = "+"))
+
+poly_10 <-  paste("frac_unpaid~", paste0("poly(", polly, ", 10, raw = TRUE)", collapse = "+"), "+", paste0(non_poly, collapse = "+"))
+
+# Define the formulas for each set of potential predictors using the formula() function
+f1 <- formula(poly_0)
+f2 <- formula(poly_5)
+f3 <- formula(poly_10)|
+
+Use OLS regression to estimate a model using each set of potential
+predictors.
+
+|#  OLS regressions for all three models
+lm_1 <- glm(f1, data = orig_svcg_2005)
+lm_2 <- glm(f2, data = orig_svcg_2005)
+lm_3 <- glm(f3, data = orig_svcg_2005)
+
+
+
+# Calculate and report the 5-fold CV MSE for each OLS model
+set.seed(1)
+
+cv_err1 <- cv.glm(orig_svcg_2005,lm_1,K=5)
+cv_err1$delta[1]|
+
+|## [1] 0.01750885|
+
+|cv_err2 <- cv.glm(orig_svcg_2005,lm_2,K=5)
+cv_err2$delta[1]|
+
+|## [1] 0.01722482|
+
+|cv_err3 <- cv.glm(orig_svcg_2005,lm_3,K=5)
+cv_err3$delta[1]|
+
+|## [1] 0.01724852|
+
+|# Does including more predictors improve out-of-sample prediction performance?
+# No, the MSE of the three models is similar. To be specific, mse of the first model is more than that of the second model, but mse in second model less than the third model. Therefore, i can not say that including more predictors improve out-of-sample prediction performance.|
+
+Now use LASSO regression to select a model from each set of potential
+predictors.
+
+|# Build the outcome and predictor vector and matrices, respectively, for each set of potential predictors
+
+poly_0_ni <- paste("frac_unpaid~0+", paste0(c(non_poly, polly), collapse = "+"))
+
+poly_5_ni<- paste("frac_unpaid~0+", paste0("poly(", polly, ", 5, raw = TRUE)", collapse = "+"), "+", paste0(non_poly, collapse = "+"))
+
+poly_10_ni<-  paste("frac_unpaid~0+", paste0("poly(", polly, ", 10, raw = TRUE)", collapse = "+"), "+", paste0(non_poly, collapse = "+"))
+
+
+f11 <- formula(poly_0_ni)
+f22 <- formula(poly_5_ni)
+f33 <- formula(poly_10_ni)
+
+m1 <- model.matrix(f11,data = orig_svcg_2005)
+m2 <- model.matrix(f22,data = orig_svcg_2005)
+m3 <- model.matrix(f33,data = orig_svcg_2005)
+
+
+# Use cv.glmnet to estimate lasso regressions for each set of potential predictors
+cvfit1 <- cv.glmnet(x=m1,y=orig_svcg_2005$frac_unpaid)
+cvfit2 <- cv.glmnet(x=m2,y=orig_svcg_2005$frac_unpaid)
+cvfit3 <- cv.glmnet(x=m3,y=orig_svcg_2005$frac_unpaid)
+# For each set of potential predictors, consider the model that corresponds to the 
+#  value of lambda that gives minimum CV MSE. Then answer the following two questions.
+mse1 <- mean((orig_svcg_2005$frac_unpaid - predict.cv.glmnet(cvfit1,m1,s="lambda.min"))^2)
+mse2 <- mean((orig_svcg_2005$frac_unpaid - predict.cv.glmnet(cvfit2,m2,s="lambda.min"))^2)
+mse3 <- mean((orig_svcg_2005$frac_unpaid - predict.cv.glmnet(cvfit3,m3,s="lambda.min"))^2)
+mse1|
+
+|## [1] 0.01749752|
+
+|mse2|
+
+|## [1] 0.01726079|
+
+|mse3|
+
+|## [1] 0.01724878|
+
+|coef1 <- coef(cvfit1, s="lambda.min")
+coef2 <- coef(cvfit2, s="lambda.min")
+coef3 <- coef(cvfit3, s="lambda.min")
+coef1|
+
+|## 11 x 1 sparse Matrix of class "dgCMatrix"
+##                             1
+## (Intercept)      4.565756e-01
+## msa              6.427259e-03
+## other_servicers -1.353975e-02
+## flag_fthbN       .           
+## flag_fthbY       .           
+## fico            -1.023910e-04
+## orig_upb         1.198584e-07
+## mi_pct          -3.773941e-04
+## dti              6.077162e-04
+## ltv              1.139181e-03
+## int_rt           6.623560e-02|
+
+|coef2|
+
+|## 35 x 1 sparse Matrix of class "dgCMatrix"
+##                                            1
+## (Intercept)                    -3.447443e-01
+## poly(fico, 5, raw = TRUE)1      1.310956e-04
+## poly(fico, 5, raw = TRUE)2     -4.260530e-09
+## poly(fico, 5, raw = TRUE)3     -3.853202e-12
+## poly(fico, 5, raw = TRUE)4     -3.750351e-15
+## poly(fico, 5, raw = TRUE)5     -1.783778e-16
+## poly(orig_upb, 5, raw = TRUE)1  5.276805e-07
+## poly(orig_upb, 5, raw = TRUE)2 -1.133128e-12
+## poly(orig_upb, 5, raw = TRUE)3  1.462046e-20
+## poly(orig_upb, 5, raw = TRUE)4  7.783912e-25
+## poly(orig_upb, 5, raw = TRUE)5  2.983602e-31
+## poly(mi_pct, 5, raw = TRUE)1   -1.655888e-03
+## poly(mi_pct, 5, raw = TRUE)2    7.145684e-05
+## poly(mi_pct, 5, raw = TRUE)3   -1.842462e-09
+## poly(mi_pct, 5, raw = TRUE)4   -3.323306e-10
+## poly(mi_pct, 5, raw = TRUE)5   -2.826057e-10
+## poly(dti, 5, raw = TRUE)1       2.172612e-03
+## poly(dti, 5, raw = TRUE)2      -3.024911e-06
+## poly(dti, 5, raw = TRUE)3      -4.925226e-07
+## poly(dti, 5, raw = TRUE)4      -4.600618e-12
+## poly(dti, 5, raw = TRUE)5       5.191100e-11
+## poly(ltv, 5, raw = TRUE)1       2.084920e-04
+## poly(ltv, 5, raw = TRUE)2       1.155551e-05
+## poly(ltv, 5, raw = TRUE)3       .           
+## poly(ltv, 5, raw = TRUE)4      -4.017387e-11
+## poly(ltv, 5, raw = TRUE)5      -6.839895e-12
+## poly(int_rt, 5, raw = TRUE)1    2.051871e-01
+## poly(int_rt, 5, raw = TRUE)2   -2.500893e-06
+## poly(int_rt, 5, raw = TRUE)3   -1.843092e-05
+## poly(int_rt, 5, raw = TRUE)4   -1.482275e-05
+## poly(int_rt, 5, raw = TRUE)5   -2.113248e-05
+## msa                             3.744338e-03
+## other_servicers                -1.328358e-02
+## flag_fthbN                      6.780226e-05
+## flag_fthbY                     -3.553825e-13|
+
+|coef3|
+
+|## 65 x 1 sparse Matrix of class "dgCMatrix"
+##                                              1
+## (Intercept)                      -4.181378e-01
+## poly(fico, 10, raw = TRUE)1       1.131411e-04
+## poly(fico, 10, raw = TRUE)2       .           
+## poly(fico, 10, raw = TRUE)3      -3.095019e-14
+## poly(fico, 10, raw = TRUE)4      -8.256150e-17
+## poly(fico, 10, raw = TRUE)5      -1.552557e-16
+## poly(fico, 10, raw = TRUE)6      -2.394802e-20
+## poly(fico, 10, raw = TRUE)7      -4.649601e-26
+## poly(fico, 10, raw = TRUE)8       .           
+## poly(fico, 10, raw = TRUE)9       .           
+## poly(fico, 10, raw = TRUE)10     -3.731647e-33
+## poly(orig_upb, 10, raw = TRUE)1   5.405556e-07
+## poly(orig_upb, 10, raw = TRUE)2  -1.047153e-12
+## poly(orig_upb, 10, raw = TRUE)3  -5.356936e-19
+## poly(orig_upb, 10, raw = TRUE)4   7.262549e-26
+## poly(orig_upb, 10, raw = TRUE)5   4.217761e-30
+## poly(orig_upb, 10, raw = TRUE)6   .           
+## poly(orig_upb, 10, raw = TRUE)7   .           
+## poly(orig_upb, 10, raw = TRUE)8   .           
+## poly(orig_upb, 10, raw = TRUE)9  -1.559321e-54
+## poly(orig_upb, 10, raw = TRUE)10 -1.386620e-59
+## poly(mi_pct, 10, raw = TRUE)1    -1.173731e-03
+## poly(mi_pct, 10, raw = TRUE)2     2.448931e-05
+## poly(mi_pct, 10, raw = TRUE)3     1.120569e-06
+## poly(mi_pct, 10, raw = TRUE)4     .           
+## poly(mi_pct, 10, raw = TRUE)5    -1.324391e-10
+## poly(mi_pct, 10, raw = TRUE)6    -3.243416e-13
+## poly(mi_pct, 10, raw = TRUE)7    -7.153635e-14
+## poly(mi_pct, 10, raw = TRUE)8    -2.118903e-15
+## poly(mi_pct, 10, raw = TRUE)9     .           
+## poly(mi_pct, 10, raw = TRUE)10    .           
+## poly(dti, 10, raw = TRUE)1        1.861401e-03
+## poly(dti, 10, raw = TRUE)2       -5.047835e-09
+## poly(dti, 10, raw = TRUE)3       -2.268210e-07
+## poly(dti, 10, raw = TRUE)4       -3.059955e-09
+## poly(dti, 10, raw = TRUE)5        .           
+## poly(dti, 10, raw = TRUE)6        .           
+## poly(dti, 10, raw = TRUE)7        3.374434e-15
+## poly(dti, 10, raw = TRUE)8        7.264449e-17
+## poly(dti, 10, raw = TRUE)9        .           
+## poly(dti, 10, raw = TRUE)10       8.587800e-21
+## poly(ltv, 10, raw = TRUE)1        3.237009e-04
+## poly(ltv, 10, raw = TRUE)2        8.249746e-06
+## poly(ltv, 10, raw = TRUE)3        .           
+## poly(ltv, 10, raw = TRUE)4        .           
+## poly(ltv, 10, raw = TRUE)5        .           
+## poly(ltv, 10, raw = TRUE)6       -4.032939e-17
+## poly(ltv, 10, raw = TRUE)7       -5.821844e-16
+## poly(ltv, 10, raw = TRUE)8        .           
+## poly(ltv, 10, raw = TRUE)9        .           
+## poly(ltv, 10, raw = TRUE)10       3.242250e-26
+## poly(int_rt, 10, raw = TRUE)1     2.191196e-01
+## poly(int_rt, 10, raw = TRUE)2     .           
+## poly(int_rt, 10, raw = TRUE)3    -4.662375e-08
+## poly(int_rt, 10, raw = TRUE)4    -5.249690e-08
+## poly(int_rt, 10, raw = TRUE)5    -4.326711e-06
+## poly(int_rt, 10, raw = TRUE)6    -1.166750e-06
+## poly(int_rt, 10, raw = TRUE)7    -4.077128e-07
+## poly(int_rt, 10, raw = TRUE)8    -3.891784e-08
+## poly(int_rt, 10, raw = TRUE)9    -3.280415e-10
+## poly(int_rt, 10, raw = TRUE)10    1.354651e-09
+## msa                               3.575019e-03
+## other_servicers                  -1.313519e-02
+## flag_fthbN                        .           
+## flag_fthbY                        .|
+
+|sum(as.vector(coef1)!=0)/length(coef1)|
+
+|## [1] 0.8181818|
+
+|sum(as.vector(coef2)!=0)/length(coef2)|
+
+|## [1] 0.9714286|
+
+|sum(as.vector(coef3)!=0)/length(coef3)|
+
+|## [1] 0.6923077|
+
+|# 1. For each set of potential predictors, what fraction of potential predictors are selected?
+# Under lasso, the fraction of potential predictors in the first model is 0.8181818 (flag_fthb is deleted).
+#the fraction of potential predictors in the second model is 0.9714286 (the cube of variable itv is deleted)
+#the fraction of potential predictors in the third model is 0.6923077 (19 variables are deleted under due to the penalty)
+
+# 2. For each set of potential predictors, what is the CV MSE of the selected model?
+# The cv mse of the first model is 0.01749731, the second is 0.01726079, and the third model is 0.01724878.|
+
+
+  Problem 3: Discussion
+
+Discuss the following points based on results above and issues discussed
+in class.
+
+ 1.
+
+    Is there any cost (in terms of predictive performance) to adding
+    more potential predictors into the LASSO model? Base on the results
+    above, there is not cost in terms of predictive performance. In
+    generally, adding more potential predictors will lead to
+    overfitting, which will result the mse lower but bias bigger.
+    However, LASSO model avoids it owning to penalty function. The sum
+    of coefficents are contrainted into a certain constant. If i add
+    potential predictors, penalty will constrain some cofficient to zero.
+
+ 2.
+
+    Are any costs (in terms of predictive performance) to adding more
+    potential predictors into a model the same for both OLS and LASSO?
+    OLS model will have much cost to hold more model,because of
+    overfitting, which will cause to lower mse but less precise in
+    prediction part. Thus, there must be a trade-off between mse and
+    bias. However, model in LASSO is no cost as i say above. Therefore,
+    the cost are not the same.
+

@@ -1,0 +1,222 @@
+---
+title: "Lab 09 -- Cross-Validation"
+author: Danni Chen
+date: Assignment due by 11:59PM on Friday, 10/4/2019
+output:
+  html_document:
+  theme: simplex
+fig_caption: true
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Getting started
+In this section we provide an application of the cross-validation methods to the Boston Housing Data, which consist of housing values in suburbs of Boston taken from the 1970 Census. The data set also contains other information that may affect house prices, such as the crime rate in the area and the proportion of owner-occupied houses. The data set and data dictionary can be found at [Boston Housing Data](https://archive.ics.uci.edu/ml/machine-learning-databases/housing/).
+
+In RStudio, create a folder called `lab-08` and set this folder as your working directory.  Download to your lab directory the `housing.data` and `housing.names` files from the Boston Housing Data archive to a sub-directory of called `data_housing`. You can perform these steps manually, but a more reproducible approach is to perform these steps using R commands.
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(boot)
+library(knitr)
+
+# Make data directory
+dir.create("data_housing")
+
+# Download data
+"https://archive.ics.uci.edu/ml/machine-learning-databases/housing/housing.data" %>% 
+  download.file("data_housing/housing.data")
+
+# Download data dictionary
+"https://archive.ics.uci.edu/ml/machine-learning-databases/housing/housing.names" %>% 
+  download.file("data_housing/housing.names")
+
+# Variable names from housing.names
+variables <- c("CRIM", "ZN", "INDUS",  "CHAS", "NOX", "RM", "AGE", 
+               "DIS", "RAD", "TAX", "PTRATIO", "B", "LSTAT", "MEDV")
+
+# Read data
+housing_data <- read_table("data_housing/housing.data", col_names = variables)
+names(housing_data)
+```
+
+# Problem 1: Validation Set Approach
+In this exercise you will test four different linear models of median home value (`MEDV`). You will estimate the following four models, each one increasing in complexity.
+
+1. Model 1: Model `MEDV` as a cubic function of `DIS`.
+
+2. Model 2: Create a factor variable that splits `TAX` into 5 bins that correspond to quartiles of `TAX`. Add this factor variable as a predictor, in addition to predictors in Model 1.
+
+3. Model 3: Add a 4th degree polynomial in `NOX` as predictors, in addition to predictors in Model 2.
+
+4. Model 4: Add a 5th degree polynomial in `CRIM` as predictors, in addition to predictors in Model 3.
+
+Compute the cross-validated MSE of each model using the Validation Set Approach, as follows. Pick a random seed, then randomly split the data into two folds. Designate one fold to be the training fold and one to be the test fold. Estimate each model using the training data, then calculate the mean squared prediction error that the model generates in the test data. You should code this procedure yourself, rather than using a packaged command for estimating cross-validated MSE (CV MSE).
+
+Based on the CV MSE you just calculated, which model is best for predicting median home values? 
+
+Use a loop to repeat this process 1,000 times. Each iteration of the loop should use a different random seed to split the data into training and test folds. In each repetition, track which model generated the smallest CV MSE. How often is each model selected as the "best" prediction model? What do the results imply about using the Validation Set Approach for selecting a model?
+
+```{r}
+housing_data <- housing_data %>%
+  mutate(tax_bin = cut(TAX, quantile(TAX, probs = seq(from = 0, to = 1, by = 0.2)), include.lowest = TRUE))
+model_1 <- glm(MEDV ~ poly(DIS, 3), data = housing_data)
+model_2 <- glm(MEDV ~ poly(DIS, 3) + tax_bin, data = housing_data)
+model_3 <- glm(MEDV ~ poly(DIS, 3) + tax_bin + poly(NOX, 4), data = housing_data)
+model_4 <- glm(MEDV ~ poly(DIS, 3) + tax_bin + poly(NOX, 4) + poly(CRIM, 5), data = housing_data)
+
+n_rows <- nrow(housing_data)
+set.seed(6)
+train_fold <- sample(1:n_rows, n_rows/2)
+
+train_1 <- glm(model_1, data = housing_data, subset = train_fold)
+model_1_MSE <- mean((housing_data$MEDV - predict(train_1, housing_data))[-train_fold]^2)
+model_1_MSE
+
+train_2 <- glm(model_2, data = housing_data, subset = train_fold)
+model_2_MSE <- mean((housing_data$MEDV - predict(train_2, housing_data))[-train_fold]^2)
+model_2_MSE
+
+train_3 <- glm(model_3, data = housing_data, subset = train_fold)
+model_3_MSE <- mean((housing_data$MEDV - predict(train_3, housing_data))[-train_fold]^2)
+model_3_MSE
+
+train_4 <- glm(model_4, data = housing_data, subset = train_fold)
+model_4_MSE <- mean((housing_data$MEDV - predict(train_4, housing_data))[-train_fold]^2)
+model_4_MSE
+
+# Answer: The MSE that model 3 is the best model, because it generates the smallest MSE.
+
+find_mse <- function(){ 
+  train_1 <- glm(MEDV~poly(DIS,3), data = housing_data, subset = train_fold) 
+  model_1_mse <- mean((housing_data$MEDV - predict(train_1, housing_data))[-train_fold]^2) 
+  train_2 <- glm(MEDV ~ poly(DIS, 3) + tax_bin, data = housing_data, subset = train_fold) 
+  model_2_mse <- mean((housing_data$MEDV - predict(train_2, housing_data))[-train_fold]^2) 
+  train_3 <- glm(MEDV ~ poly(DIS, 3) + tax_bin + poly(NOX, 4), data = housing_data, subset = train_fold) 
+  model_3_mse <- mean((housing_data$MEDV - predict(train_3, housing_data))[-train_fold]^2) 
+  train_4 <- lm(MEDV ~ poly(DIS, 3) + tax_bin + poly(NOX, 4) + poly(CRIM, 5), data = housing_data, subset = train_fold) 
+  model_4_mse <- mean((housing_data$MEDV - predict(train_4, housing_data))[-train_fold]^2) 
+  mse <- c(model_1_mse, model_2_mse, model_3_mse,model_4_mse) 
+  min=min(mse) 
+  best_model <- which(as.character(mse)==as.character(min)) 
+  return(tibble(min, best_model)) 
+}
+
+find_mse()
+
+a <- c(1:1038)[-c(31,50,103,134,192,197,256,262,271,276,290,313,355,361,477,561,571,614,644,663,670,678,685,690,693,699,718,719,736,761,778,826,854,875,979,1001,1013,1026)]
+
+mse_tibble <- tibble()
+mse_tibble
+
+for (i in a){ 
+  set.seed(i) 
+  n_row <- nrow(housing_data) 
+  train_fold <- sample(1:n_row, n_row/2) 
+  mse_tibble <- append(mse_tibble, find_mse()) 
+  } 
+
+x <- mse_tibble[seq(2,2000,2)] 
+how_often <- c(sum(x==1), sum(x==2),sum(x==3),sum(x==4)) 
+how_often
+
+# Answer: In the 1000 repeating cross validation process, model 3 are selected as the best model for 627 times, and model_1, model_2, and model_4 are selected as the best model for 2, 14, and 357 times respectively. The results imply that when we are using the Validation Set Approach to select a model, sometimes the answer to which the best model is might be not consistant if we are using different set seeds. Thus this approach might cause confusion in which model is best to select.
+
+```
+
+
+# Problem 2: Leave-One-Out Cross-Validation (LOOCV)
+Repeat the exercise from Problem 1, but now use LOOCV for calculated mean squared prediction error. You should code this procedure yourself, rather than using a packaged command for estimating cross-validated MSE (CV MSE). 
+
+Which model is best acording to the LOOCV method? Does your answer depend on your choice of random seed? Why or why not?
+
+Next, calculate the LOOCV MSE using the `cv.glm()` function from the `boot` package. Use `all.equal()` to confirm that your calculations are equal to those produced by `cv.glm()`.
+```{r}
+# Code your own procedure to calculate LOOCV for each model
+predict_loo <- function(j, formula){
+  lm <- lm(formula, slice(housing_data, -j))
+  predict(lm,slice(housing_data,j))
+}
+
+model1 <- sapply(1:nrow(housing_data), predict_loo, formula=formula(MEDV~poly(DIS,3)))
+
+model2 <- sapply(1:nrow(housing_data), predict_loo, formula=formula(MEDV~poly(DIS,3)+tax_bin))
+
+model3 <- sapply(1:nrow(housing_data), predict_loo, formula=formula(MEDV~poly(DIS,3)+tax_bin+poly(NOX,4)))
+
+model4 <- sapply(1:nrow(housing_data),predict_loo, formula=formula(MEDV~poly(DIS,3)+tax_bin+poly(NOX,4)+poly(CRIM, 5)))
+
+my_loo1 <- mean((housing_data$MEDV-model1)^2)
+my_loo2 <- mean((housing_data$MEDV-model2)^2)
+my_loo3 <- mean((housing_data$MEDV-model3)^2)
+my_loo4 <- mean((housing_data$MEDV-model4)^2)
+
+my_loo1
+my_loo2
+my_loo3
+my_loo4
+
+# Acording to the LOOCV method, model 3 is the best with the smallest MSE. This answer does not depend on my choice of random seed. Because each obeservation in the dataset will be test once in this LOOCV process, and we do not need to get a random split of the entire dataset. So we do not need to set a random seed.
+
+# Use cv.glm() to calculate LOOCV for each model
+loocv_1 <- cv.glm(housing_data, model_1)
+loocv_1$delta[1]
+
+loocv_2 <- cv.glm(housing_data, model_2)
+loocv_2$delta[1]
+
+loocv_3 <- cv.glm(housing_data, model_3)
+loocv_3$delta[1]
+
+loocv_4 <- cv.glm(housing_data, model_4)
+loocv_4$delta[1]
+
+all.equal(c(my_loo1, my_loo2, my_loo3, my_loo4), c(loocv_1$delta[1], loocv_2$delta[1], loocv_3$delta[1], loocv_4$delta[1]))
+
+# Answer: The calculations in two methods are all equal to each other.
+
+```
+
+
+# Problem 3: k-Fold Cross-Validation
+Repeat the exercise from problem 1, but now calculate k-fold cross-validation prediction errors for each of the models in Problem 1. Use a unique sample (seed) and compute k-fold cross validations first using 5 folds, and again using 10 folds. You may code this procedure yourself, or you may use the `cv.glm()` function from the `boot` package.
+
+Which model is best acording to 5-fold CV MSE? Which model is best acording to 10-fold CV MSE? How does 5-fold versus 10-fold MSE compare for each model? Briefly discuss some pros and cons of using 5-fold versus 10-fold cross-validation.
+```{r}
+# 5-fold CV MSE
+set.seed(1)
+
+cv_k5_1 <- cv.glm(housing_data, model_1, K = 5)
+cv_k5_1$delta[1]
+
+cv_k5_2 <- cv.glm(housing_data, model_2, K = 5)
+cv_k5_2$delta[1]
+
+cv_k5_3 <- cv.glm(housing_data, model_3, K = 5)
+cv_k5_3$delta[1]
+
+cv_k5_4 <- cv.glm(housing_data, model_4, K = 5)
+cv_k5_4$delta[1]
+
+# 10-fold CV MSE
+cv_k10_1 <- cv.glm(housing_data, model_1, K = 10)
+cv_k10_1$delta[1]
+
+cv_k10_2 <- cv.glm(housing_data, model_2, K = 10)
+cv_k10_2$delta[1]
+
+cv_k10_3 <- cv.glm(housing_data, model_3, K = 10)
+cv_k10_3$delta[1]
+
+cv_k10_4 <- cv.glm(housing_data, model_4, K = 10)
+cv_k10_4$delta[1]
+
+# Answer: Model 3 is best acording to both 5-fold and 10-fold CV MSE.
+
+# Comparison: For model_1 and model_3, 5-fold calculation has smaller MSE, while for model_2 and model_4, 10-fold calculation has smaller MSE. Although the values of CV MSE in the 5-fold and 10-fold caculations differ, we come to the same conclusion with the two approaches that model 3 has the smallest MSE thus model 3 is the best model.  
+
+# Pros and cons of using 5-fold versus 10-fold cross-validation: 5-fold CV has lower bias but higher variance, but 10-fold CV has higher bias but lower variance. So actually there is a trade of between bias and variance when we are choosing the value of "K" for K-fold cross validation.
+
+```
+

@@ -1,0 +1,165 @@
+---
+title: "Lab 13 -- Tree-Based Models"
+header-includes:
+   - \usepackage{amsmath}
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    theme: simplex
+    fig_caption: true
+    number_sections: false
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Decision Trees
+Tree-based methods involve stratifying or segmenting the predictor space into a number of simple regions. The prediction of the outcome variable for a given observation is typically done by the mean or the mode of the training observations in the region to which it belongs.
+
+**Prediction** To stratify the space, the goal is to minimize the RSS. But since it is not feasible to consider all possible partitions of the space, we take a top-down approach know as recursive binary splitting. From the top of the tree, each split is indicated via two new branches; at each node, the best split is made, without considering which split may lead to a better tree in the future.
+
+The goal is to define $R_1(j,s)=\{X|X_j<s\}$ and $R_2(j,s)=\{X|X_j\ge s\}$ such that $j$ and $s$ minimize
+
+$$\sum_{i:x_i\in R_1(j,s)}(y_i - \hat{y}_{R_1})^2 + 
+\sum_{i:x_i\in R_2(j,s)}(y_i - \hat{y}_{R_2})^2 $$
+
+The splitting continues until a stopping criterion is reached, for example a minimum number of observations in each region.
+
+**Tree Pruning**
+Following the process described above, we may end up with a tree that fits the training data well, but overfits the data, resulting in poor out-of-sample prediction performance. That is why we may opt instead for a simpler tree by growing a large tree and then pruning it.
+
+We use cross validation to choose the optimal tree. However, as the testing of every subtree would be infeasible, we minimize the MSE added to a penality for each new node. The idea is similiar to the procedure in lasso.
+
+$$\sum_{m=1}^{|T|}\sum_{x_i\in R_m}(y_i - \hat{y}_{R_m})^2 + \alpha |T|$$
+
+
+The penality $\alpha$ is chosen by validation set or cross-validation. 
+
+We first grow the large tree in the training data, than select a sequence of best subtrees as a function of $\alpha$. The next step is to apply K-fold validation, repeating the process for each fold of the data (growing a large tree and selecting the best subtrees as a function of $\alpha$, then computing the MSE in the left-out folder). Pick the $\alpha$ that minimizes the average error. Return the subtree from the training data that corresponds to the chosen $\alpha$. This process is detailed in section 8.1 of the book.
+
+**Classification vs. Regression Trees**
+In a classification tree, the predicted response of each group will not correspond to the mean of that group, but to the most commonly occuring class of training observations in the region.
+
+Instead of using the RSS as a criterion for the splits, we use the classifcation error rate - the fraction of training observations in that region that do not belong to that class. Another common measure is the Gini index and the entropy. Both are considered a measure of exclusiveness, i.e. the extent to which a node mostly contains observations from a single class.
+$$ E = 1 - max_k(\hat{p}_{mk})$$
+$$ G = \sum_{k=1}^K \hat{p}_{mk}(1-\hat{p}_{mk})$$
+
+
+# Application: Boston Housing Data
+
+## Getting Started
+In this section we will work with the Boston Housing Data, which consist of housing values in suburbs of Boston taken from the 1970 Census. The data set also contains other information that may affect house prices, such as the crime rate in the area and the proportion of owner-occupied houses. The data set and data dictionary can be found at [Boston Housing Data](https://archive.ics.uci.edu/ml/machine-learning-databases/housing/).
+
+In RStudio, create a folder called `lab-10` and set this folder as your working directory.  Download to your lab directory the `housing.data` and `housing.names` files from the Boston Housing Data archive to a sub-directory of called `data_housing`. You can perform these steps manually, but a more reproducible approach is to perform these steps using R commands.
+
+This assignment requires the R packages `rpart`, `rpart.plot` and `randomForest` to be installed. Install these packages, if necessary.
+
+```{r, message=FALSE, warning=FALSE}
+library(rpart)
+library(rpart.plot)
+library(tidyverse)
+library(ggplot2)
+# delete library(randomForest)
+# install.packages("rpart.plot")
+
+# Make data directory
+dir.create("data_housing")
+
+# Download data
+"https://archive.ics.uci.edu/ml/machine-learning-databases/housing/housing.data" %>% 
+  download.file("data_housing/housing.data")
+
+# Download data dictionary
+"https://archive.ics.uci.edu/ml/machine-learning-databases/housing/housing.names" %>% 
+  download.file("data_housing/housing.names")
+
+# Variable names from housing.names
+variables <- c("CRIM", "ZN", "INDUS",  "CHAS", "NOX", "RM", "AGE", 
+               "DIS", "RAD", "TAX", "PTRATIO", "B", "LSTAT", "MEDV")
+
+# Read data
+housing_data <- read_table("data_housing/housing.data", col_names = variables)
+names(housing_data)
+```
+
+## Fit the model
+We start by inspecting the data and removing rows with missing values in any variable. We will use all available variables as explanatory, and the median housing value (MEDV) as the outcome.
+
+Set the seed before running the `rpart` command. Although the fit of the tree is not random, the object includes cross-validation tests, which have a random component.
+
+```{r, message=FALSE, warning=FALSE}
+# The data is complete, so no need to remove observations
+sum(!complete.cases(housing_data))
+
+# Split in the training and testing data sets
+set.seed(1)
+train_housing_data <- sample_frac(housing_data, 0.5)
+test_housing_data <- setdiff(housing_data, train_housing_data)
+#setdifference-subtract training data from housing_data.
+
+# Fit the tree 
+tree_housing <- rpart(MEDV ~ ., data = train_housing_data, cp = 0.001)
+#rpart: partition of the data, cp=% of RSS needed to drop
+
+# Summary of the rpart object
+summary(tree_housing)
+printcp(tree_housing)
+
+```
+
+One of the advantages of this fitting is to plot the figure. We can see the variable number of rooms `LSTAT` is the most important variable to explain housing median values, since this is the first variable on which the model splits.
+
+Call the object to see each branch and its split criterion, the number of observations, the deviance and the overall prediction.
+
+```{r, message=FALSE, warning=FALSE}
+# Plot the tree
+plot(tree_housing, uniform = TRUE, margin = .1)
+text(tree_housing, pretty = 0)
+
+# Nicer plot
+prp(tree_housing, extra = 1, box.palette = "auto")
+
+# Inspeact each element 
+tree_housing
+```
+## Prune the tree
+Prune the tree to see if the model improves by calling the `prune` command. This commands use 10-fold CV - remember we are still in the training dataset. It is implemented automatically by the function `rpart`. To see the table with the nodes and the errors, we use the `printcp` command.
+
+
+```{r}
+# CV
+printcp(tree_housing)
+
+# Plot the relative error (10-fold ratio described above)
+plotcp(tree_housing)
+
+# Create an index for of the row with the minimum xerror
+index <- which.min(tree_housing$cptable[ , "xerror"])
+
+# Create tree_min
+tree_min <- tree_housing$cptable[index, "CP"]
+tree_min
+
+# Prune the tree (in this case no prune was made - chosen model is the large tree)
+prune_housing <- prune(tree_housing, cp = tree_min)
+
+# Plot
+prp(prune_housing, extra = 1, box.palette = "auto")
+#trim off the nodes
+```
+
+
+## Make Predictions
+Use the fitted decision tree to make predictions in the hold-out test sample.
+
+```{r}
+# Predict in the test data
+medv_predict <- predict (prune_housing, newdata = test_housing_data)
+
+# MSE
+mean((medv_predict - test_housing_data$MEDV)^2)
+
+```
+

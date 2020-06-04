@@ -1,0 +1,233 @@
+---
+title: "Lab 14 -- Bagging, Random Forests, and Boosting"
+author: Danni Chen
+date: Assignment due by 11:59PM on Friday, 10/25/2019
+output:
+  html_document:
+  theme: simplex
+fig_caption: true
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Getting started
+In this assignment, you will apply different tree-based models to a dataset of NYC yellow taxi trips. The dictionary and other details of the data can be found [here](http://www.nyc.gov/html/tlc/html/about/trip_record_data.shtml).
+
+Start by loading the packages `tidyverse`, `rpart`, `rpart.plot`, `randomForest`, and `gbm`. Also load the NYC taxi data you downloaded from S3, per the assignment instructions. The data looks is composed of a sample of trips from May 2018.  
+
+The goal is to develop trees that predict how much tip the driver receives after a trip based on the information we have about that trip. Read the code below to load the data. In problem 1 you will prepare the data, problems 2-5 you will build the trees, and in problem 6 you will analyze the results.
+
+*Hint* This is a large dataset, and building trees can be computationally expensive. Make sure your environment is empty before trying to knit the file. Also, keep your code clean - avoid creating unnecessary objects. If you still have problems with allocating memory, try restarting R.
+
+```{r chunk_load}
+library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(gbm)
+
+# Read the data
+taxi <- readRDS("yellow_taxi_data.RDS")
+```
+
+# Problem 1 - Prepare the data
+Take the following steps to prepare the dataset:
+
+1. Generate the variables:
+  - `weekend`: binary variable, equals 1 if trip was taken in a weekend.
+  - `hour_pickup`: numeric variable with integer equal to the hour the trip was taken.
+  - `credit_card`: binary variable, equals 1 if trip was paid with a credit card.
+  - `std_rate`: binary variable, equals 1 if rate of the trip was standard.
+
+```{r}
+taxi <- taxi %>%
+  mutate(weekend = ifelse(weekdays(taxi$tpep_pickup_datetime) %in% c("Sunday", "Saturday"), 1, 0),
+         hour_pickup = as.numeric(format(taxi$tpep_pickup_datetime, "%H")),
+         credit_card = as.numeric(payment_type == 1),
+         std_rate = as.numeric(RatecodeID == 1))
+```
+
+2. Keep only these variables in your data: `passenger_count`, `trip_distance`, `weekend`, `hour_pickup`, `credit_card`, `std_rate`, `tip_amount`, `fare_amount`
+
+```{r}
+taxi <- taxi %>%
+  dplyr::select(passenger_count, trip_distance, weekend, hour_pickup, credit_card, std_rate, tip_amount, fare_amount)
+```
+
+3. Filter your data keeping only complete and distinct cases.
+```{r}
+taxi <- taxi %>%
+  filter(complete.cases(.)) %>%
+  distinct()
+```
+
+4. Build the training and testing dataset, each with half of the data. 
+```{r}
+set.seed(1)
+train_data <- sample_frac(taxi, 0.5)
+test_data <- setdiff(taxi, train_data)
+```
+
+5. Remove the original dataset.
+```{r}
+remove(taxi)
+```
+
+# Problem 2 - Tree
+Build and plot a tree to explain `tip_amount` and compute the MSE in the test dataset.
+```{r}
+# Tree model form
+tree_form <- formula(tip_amount ~ .)
+model.matrix(tree_form, data = train_data) %>% 
+  colnames()
+
+# Fit the tree 
+tree_tip <- rpart(tree_form, data = train_data)
+
+# Check the importance of each variable
+prp(tree_tip, extra = 1, box.palette = "auto")
+imp_tree <- "fare_amount"
+
+# Predict in the test data
+tree_predict <- predict(tree_tip, newdata = test_data)
+
+# MSE
+MSE_tree <- mean((tree_predict - test_data$tip_amount)^2)
+MSE_tree
+```
+
+# Problem 3 - Bagging
+Use a bagging strategy to impove your model. Modify the random forest algorithm to simulate in 100 trees. Check visually the importance of each variable, and compute the test MSE.
+
+```{r}
+# Fit the tree 
+bag_tip <- randomForest(tree_form, 
+                        data = train_data, 
+                        ntree=100,
+                        mtry = 7, 
+                        importance = TRUE)
+
+# Call the object to see the number of trees and the variables used in each split
+bag_tip
+
+# Check the importance of each variable
+importance(bag_tip)
+varImpPlot(bag_tip)
+imp_bag <- "credit_card/fare_amount"
+
+# Test the model
+bag_predict <- predict(bag_tip, test_data)
+
+# MSE
+MSE_bag <- mean((bag_predict - test_data$tip_amount)^2)
+MSE_bag
+```
+
+# Problem 4 - Random forest
+Build the tree using two variations of the random forest strategy, limiting the number of predictors in your model to 2 and 4 variables. Simulate in 100 trees. Compute the test MSE for each strategy.
+
+```{r}
+# Strategy 1: Number of predictors to be considered = 2
+rf_tip_2v <- randomForest(tree_form, 
+                           data = train_data, 
+                           ntree=100,
+                           mtry=2, 
+                           importance=TRUE)
+# Strategy 1: Check the importance of each variable
+importance(rf_tip_2v)
+varImpPlot(rf_tip_2v)
+imp_rf_var2 <- "credit_card/fare_amount"
+
+# Strategy 1: test the model and calculate MSE in the test data
+rf_predict_2v <- predict(rf_tip_2v, newdata = test_data)
+MSE_rf_2v <- mean((rf_predict_2v - test_data$tip_amount)^2)
+MSE_rf_2v
+
+# Strategy 2: Number of predictors to be considered = 4
+rf_tip_4v <- randomForest(tree_form, 
+                           data = train_data, 
+                           ntree=100,
+                           mtry=4, 
+                           importance=TRUE)
+# Strategy 2: Check the importance of each variable
+importance(rf_tip_4v)
+varImpPlot(rf_tip_4v)
+imp_rf_var4 <- "credit_card/fare_amount"
+
+# Strategy 2  test the model and calculate MSE in the test data
+rf_predict_4v <- predict(rf_tip_4v, newdata = test_data)
+MSE_rf_4v <- mean((rf_predict_4v - test_data$tip_amount)^2)
+MSE_rf_4v
+```
+
+# Problem 5 - Boosting
+Apply boosting to improve your model, using both the default interaction depth (1) and then setting it equal to 3. Modify the algorithm to simulate with 100 trees.
+
+```{r}
+set.seed(1)
+
+# Boosting 1 : Boosting with interaction.depth = 1
+boost_tip_1 <- gbm(tree_form, 
+                     data = train_data, 
+                     distribution = "gaussian", 
+                     n.trees = 100, 
+                     interaction.depth = 1) 
+summary(boost_tip_1)
+imp_boost1 <- "fare_amount"
+
+# Boosting 1 :Test the model
+boost_predict_1 <- predict(boost_tip_1, test_data, n.trees = 100)
+
+# MSE_boosting_1
+MSE_boosting_1 <- mean((boost_predict_1 - test_data$tip_amount)^2)
+MSE_boosting_1
+
+# Boosting 2: Boosting with interaction.depth = 3
+boost_tip_2 <- gbm(tree_form, 
+                     data = train_data, 
+                     distribution = "gaussian", 
+                     n.trees = 100, 
+                     interaction.depth = 3) 
+summary(boost_tip_2)
+imp_boost2 <- "fare_amount"
+
+# Boosting 2: Test the model
+boost_predict_2 <- predict(boost_tip_2, test_data, n.trees = 100)
+
+# MSE_boosting_1
+MSE_boosting_2 <- mean((boost_predict_2 - test_data$tip_amount)^2)
+MSE_boosting_2
+```
+
+# Problem 6 - Analyze
+Build a table with the name of the method, the most important variable according to that method, and the test MSE. 
+```{r}
+analysis <- tibble(Model = c("Tree", "Bagging", "RF_2Vars", "RF_4Vars", "Boost_depth1", "Boost_depth3") , Importance = c(imp_tree, imp_bag, imp_rf_var2, imp_rf_var4, imp_boost1, imp_boost2), test_MSE = c(MSE_tree, MSE_bag, MSE_rf_2v, MSE_rf_4v, MSE_boosting_1, MSE_boosting_2))
+analysis
+```
+1. Which model is the best according to the MSE? 
+
+Answer: 
+
+According to the result above, we can see that the boosting model with an interaction depth of 3 is the best model because it has the smallest MSE in the test data.
+
+2. Can you provide an intuition for why there are differences between the two random forest models, and between the two boosting models? 
+
+Answer: 
+
+a. In the random forest model, if we choose to keep different numbers of variables, we might have different MSEs because each variable has different importance and relevance to the tree. From the result above, we can see that using 4 variables generates a larger MSE than using 2 variables, which means Random Forest Model with 2 variables is better. The reason might be when we are using 4 variables, we might be adding some variables which are less relevant. And if we only choose 2 variables, the predictive power is even bigger than using 4 variables. 
+
+b. In the boosting model, when we use a larger interaction depth of 3, we are trying to take more steps to reduce the residual prediction error and to make more splits in the tree. The result above shows that the MSE with more interaction depth is smaller, which means we should choose interation depth of 3 because more interations led to a better model which generate less MSE in the test data.
+
+
+3. Choose one model and interpret the results. What is your explanation for the variables that (do not) matter for explaining how much tip a driver earns in a trip?
+
+Answer:
+
+Take the boosting model with interaction depth 3 for example. (This is the best model since it generates the smallest MSE.)
+
+The result shows that fare amount is the most important variable to predict how much tip a driver will earn in a trip. Also, whether the passengers are using credit cards to pay is quite predictive as well. The distance has relatively small predictive power. However, hour_pickup, std_rate, passenger_count, seem to be less important when predicting the amount of tip. Whether the trip is on weekends seems not predictive.
+
+My explanation: Fare amount is the most important because people usually paid a tip which is a certain fraction of the total fare (15% or 18%). So generally the drivers would receive a larger amount of tips if the fare amount is larger. And if people are using credit card, on one hand it would be more easy for them to pay a tip. On the other hand, people who is using credit cards tend to have good credit records and might be richer and more generous with high social status. The distance is also relevant because the fare will be higher if they drives far away. 
+However, whether people are taking the taxi on weekends does not affect the tip amount because people's willing to pay tips will be not affected by which day of a week it is. Hour_pickup, std_rate and passenger_count also does not affect people's habits of paying tips very much.

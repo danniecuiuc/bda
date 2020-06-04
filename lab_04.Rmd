@@ -1,0 +1,174 @@
+---
+title: "Lab 04 - Data Exploration"
+author: NAME HERE
+date: Assignment due by 11:59PM on Sunday, September 15, 2019
+output:
+  html_document:
+  toc: false
+  theme: simplex
+---
+
+
+# Problem 1: Import and check the data
+We will use the Freddie Mac loan data that you worked with in lab-03. In that lab, you combined loan origination and performance data, and saved the results to a file called orig_svcg. You will work with this file in this lab assignment.
+
+1. To begin, use R code to create a copy of `"cleaned_Freddie_Mac.Rdata"` in your lab-04 folder at `~/fin580/lab-04`.
+```{r}
+# Copy cleaned_Freddie_Mac.Rdata from ~/fin580/lab-03 to ~/fin580/lab-04
+
+```
+
+2. Reload the data saved in `"cleaned_Freddie_Mac.Rdata"`.
+```{r}
+
+```
+
+3. Quality check the data: write R commands to confirm each of the following statements.
+```{r}
+# The object orig_svcg is a tibble
+
+
+# orig_svcg has 180,550 rows and 14 variables
+
+
+# Observations in orig_svcg are uniquely defined by the `id_loan` and `svcg_cycle` variables
+# Hint: this means no two observations have the same values for both `id_loan` and `svcg_cycle`
+
+```
+
+
+# Problem 2: Summarize the data
+For each of the following questions, provide a solution using both (a) base R operations only and (b) `dplyr` operations only.
+
+1. Each row in `orig_svcg` is a monthly observation of a loan. How many rows are in `orig_svcg`?
+```{r}
+# Base R only
+
+
+# dplyr only, using summarize
+
+```
+
+2. How many loans are in `orig_svcg`?
+```{r}
+# Base R only
+
+
+# dplyr only, using summarize
+
+```
+
+3. What is the average fico score in `orig_svcg`, based only on one record per loan (i.e., use only observations where `first_record == TRUE`).
+```{r}
+# Base R only
+
+
+# dplyr only
+
+```
+
+# Problem 3: Pipes `%>%`
+1. Rewrite the following command so as not to use the pipe operator (` %>% `).
+```{r}
+# Rewrite, avoiding %>%
+orig_svcg %>% 
+  filter(first_record == TRUE) %>% 
+  group_by(st) %>% 
+  summarise(mean_fico = mean(fico), mean_int_rt = mean(int_rt))
+```
+
+2. Rewrite the following command to "pipe" the data frame `orig_svcg` into the dplyr function.
+```{r}
+# Rewrite to pipe the data frame into the dplyr action
+summarise(orig_svcg, n_distinct(st))
+```
+
+3. Use pipes to rewrite the following sequence of commands as a single chain of actions, never saving intermediate output into `x1`, `x2`, etc.
+```{r}
+x1 <- filter(orig_svcg, st == "NY")
+
+x2 <- filter(x1, fico > 680 & !is.na(fico) & !is.na(dti))
+
+x3 <- mutate(x2, dti_bin = dti > median(dti))
+
+x4 <- group_by(x3, dti_bin)
+
+x5 <- filter(x4, first_record == TRUE)
+
+summarize(x5, mean(dti), mean(fico), mean(ltv), mean(int_rt))
+```
+
+4. The `paste` command concatenates character strings. Modify only the second line of code below so that the output of the pipe operation is `"Hello World!". Hint: you need the character string to be piped into the second argument of `paste`.
+```{r}
+"World!" %>% 
+  paste("Hello")
+```
+
+
+# Problem 4: Flag defaulted loans
+Define "default" to indicate loans that are more than 60 days late or those with a delinquency status of "R" (REO Acquisition) as in "default." In this case, we will say that the loan has reached a delinquency status of "D60." 
+
+1. We will start by gaining a better understanding of how the delinquency status variable `delq_sts` is defined. Create a table showing the values that `delq_sts` takes on, and how many observations take on each status. How many observations have a delinquency status of "R"?
+```{r}
+# Tabulate delq_sts values
+
+```
+
+2. Using the `mutate` command, add a new variable to `orig_svcg` named `default` that equals 1 if a loan is in default (D60) in a given month and 0 otherwise. Add code to complete the requested quality checks.
+```{r}
+# Add the default variable to orig_svcg
+
+
+# Quality check: add code to confirm that default==1 whenever delq_sts=="R"
+
+
+# Quality check: add code to confirm that the default variable is never missing
+
+```
+
+3. Using the `group_by` and `mutate` commands, add to `orig_svcg` a variable named `ever_default` which equals 1 if a loan is ever in default. Make sure to remove any grouping from `orig_svcg`.
+
+```{r}
+# Add the ever_default variable
+
+
+# Confirm that orig_svcg is not a grouped data frame
+
+```
+
+4. What fraction of loans in the sample ever enter default, according to our definition of default?
+```{r}
+# Optional: can you calculate this using a single sequence of dplyr actions, chained by pipes (%>%)?
+
+```
+
+5. What is the average fico score and average interest rate for loans that ever default versus loans that never default? Are these patterns what you would expect? Briefly discuss. (Note: make sure you use only one observation per loan when calculating average fico scores.)
+```{r}
+# Use dplyr commands such as `group_by` and `summarize` to calculate you answers 
+
+```
+
+6. Using the `mutate` and `cut` commands, create a categorical variable named `int_group` that splits observations into 10 groups based on the interest rate of the loan. Then create a table showing the categories and how many observations fall into each groups.
+```{r}
+# Add the int_group variable to orig_svcg
+orig_svcg <- 
+
+# Tabulation of categories
+
+```
+
+7. For each interest rate group, calculate the following summary statistics: (a) what is the minimum interest rate? (b) what is the maximum interest rate? (c) what fraction of loans ever default? (d) how many loans are in the interest rate group? Only use one observation per loan when calculating means. Use the dplyr commands `group_by` and `summarize` in your answer.
+```{r}
+# Can you calculate all requested summary statistics using a single chain of dplyr operations?
+
+```
+
+8. Base on the previous question, what is the general pattern between original loan interest rates and default rates? And how does the default rate in the highest interest rate group compare to that of lower interest rate groups? Discuss. (No additional code required.)
+
+9. For each state, calculate the (a) average interest rates, (b) the fraction of loans that ever default, and (c) the number of loans. Sort the resulting data frame in decreasing order of default. Which state is listed first?
+```{r}
+
+```
+
+
+
